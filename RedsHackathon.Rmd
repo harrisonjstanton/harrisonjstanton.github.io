@@ -1,0 +1,347 @@
+---
+title: "Reds Hackathon"
+author: "Harrison Stanton"
+date: "2024-01-23"
+output:
+pdf_document: default
+html_document: default
+---
+
+```{r}
+library("dplyr")
+library("tidyverse")
+savant_pitch_level <- read_csv("savant_pitch_level.csv")
+fangraphs_season_level <- read.csv("fangraphs_season_level.csv")
+```
+
+##making rp_df
+```{r}
+rp_df <- fangraphs_season_level %>% filter(Role == 'RP')
+rp_df <- rp_df %>% filter(Pitches >= 250)
+rp_df <- rp_df %>% filter(!(NameASCII == 'Alex Colome'))
+#this dude had no offspeed pitches... messed up the regression, filtered him out. Only one who threw 0 offspeed pitches 
+```
+
+##Adding best pitch grades to rp_df
+```{r}
+rp_df <- rp_df %>% 
+   rowwise() %>%
+   mutate(best_fastball_grade =max(c_across(c(wFB_per_c, wCT_per_c)), na.rm = TRUE)
+   )
+ 
+ rp_df <- rp_df %>% 
+   rowwise() %>%
+   mutate(best_offspeed_grade =max(c_across(c(wSL_per_c, wCB_per_c, wCH_per_c, wSF_per_c, wKN_per_c)), na.rm = TRUE)
+ )
+```
+
+
+##initial regression
+```{r}
+
+rp_reg <- lm(SIERA ~ SwStr_pct + Stuff_plus + Location_plus + H_per_9 + HR_per_9_plus + BABIP + LOB_pct + RE24 + OSwing_pct + ZSwing_pct + OContact_pct + ZContact_pct + FRM + EV  + Barrel_pct + HardHit_pct +  botStf + AVG + IFH_pct + best_offspeed_grade + best_fastball_grade, data = rp_df)
+
+summary(rp_reg)
+```
+
+
+##Finished rp_reg, deleted statistically insignificant variables 1 by 1
+```{r}
+rp_reg_2 <- lm(SIERA ~ SwStr_pct  + Location_plus + HR_per_9_plus + BABIP  + RE24 + OSwing_pct + ZSwing_pct  + ZContact_pct + EV  + Barrel_pct + HardHit_pct  + AVG  + best_fastball_grade, data = rp_df)
+
+summary(rp_reg_2)
+
+```
+
+
+```{r}
+rp_df$residuals <- rp_reg_2$residuals
+```
+
+```{r}
+rp_df$fitted <- rp_reg_2$fitted.values
+```
+
+
+##working on SP reg
+```{r}
+sp_df <- fangraphs_season_level %>% filter(Role == 'SP')
+sp_df <- sp_df %>% filter(Pitches >= 400)
+```
+
+##adding the grades again
+```{r}
+sp_df <- sp_df %>% 
+   rowwise() %>%
+   mutate(best_fastball_grade =max(c_across(c(wFB_per_c, wCT_per_c)), na.rm = TRUE)
+   )
+ 
+ sp_df <- sp_df %>% 
+   rowwise() %>%
+   mutate(best_offspeed_grade =max(c_across(c(wSL_per_c, wCB_per_c, wCH_per_c, wSF_per_c, wKN_per_c)), na.rm = TRUE)
+ )
+```
+
+##initial sp regression
+```{r}
+sp_reg <- lm(SIERA ~ SwStr_pct + Stuff_plus + Location_plus + H_per_9 + HR_per_9_plus + BABIP + LOB_pct + RE24 + OSwing_pct + ZSwing_pct + OContact_pct + ZContact_pct + FRM + EV  + Barrel_pct + HardHit_pct +  botStf + AVG + IFH_pct + best_offspeed_grade + best_fastball_grade, data = sp_df)
+
+summary(sp_reg)
+```
+
+##finished regression, deleted statistically insignificant variables 1 by 1
+```{r}
+sp_reg_2 <- lm(SIERA ~ SwStr_pct + Location_plus  + HR_per_9_plus + BABIP + LOB_pct + RE24 + ZContact_pct + EV  + Barrel_pct + HardHit_pct +   AVG + best_fastball_grade, data = sp_df)
+
+summary(sp_reg_2)
+
+```
+
+
+##Adding residuals and fitted values to the sp_df
+```{r}
+sp_df$residuals <- sp_reg_2$residuals
+```
+
+```{r}
+sp_df$fitted <- sp_reg_2$fitted.values
+```
+
+
+##recombining SP and RP to use facet wrap
+```{r}
+combined_df <- rbind(rp_df, sp_df)
+```
+
+##scatterplot of residuals
+```{r}
+ggplot(combined_df, aes(x = fitted, y = residuals)) +
+  geom_point() +
+  facet_wrap(~ Role, scales = "free") +
+  labs(x = "Fitted Values", y = "Residuals") +
+  theme_minimal() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  ggtitle("Residuals vs. Fitted Values")
+```
+
+##histogram of the residuals 
+```{r}
+ggplot(combined_df, aes(x = residuals)) +
+  geom_histogram(binwidth = 0.175) +
+  xlim(-1.5, 1.5) +
+  facet_wrap(~ Role) +
+  ggtitle("Histogram of Residuals")
+```
+
+##going to add projected SIERA based on other positions regression
+```{r}
+rp_df$projected_other_SIERA <- predict(sp_reg_2, newdata = rp_df)
+sp_df$projected_other_SIERA <- predict(rp_reg_2, newdata = sp_df)
+```
+
+This is where I'm editing (time 2)
+##trying to add column that takes difference between real SIERA and projected
+```{r}
+#negative means improvement (projected is lower than current) while positive means stay in current role
+#subtract/add .37 because of the way that SIERA is calculated, the percentage that the player is in an SP role
+rp_df$diff_in_SIERA <- rp_df$projected_other_SIERA - rp_df$SIERA + .37
+sp_df$diff_in_SIERA <- sp_df$projected_other_SIERA - sp_df$SIERA - .37
+```
+
+##new data frames, top 100 in each category of projected SIERA 
+```{r}
+sp_to_rp_df <- sp_df %>%
+  arrange(diff_in_SIERA) %>%
+  head(100)
+
+rp_to_sp_df <- rp_df %>%
+  arrange(diff_in_SIERA) %>%
+  head(100)
+```
+
+
+##filter out starters/relievers on the list who are above average
+```{r}
+sp_to_rp_df <- sp_to_rp_df %>% filter(SIERA >= 3.75)
+rp_to_sp_df <- rp_to_sp_df %>% filter(SIERA >= 3.75)
+```
+
+
+
+```{r}
+sp_to_rp_long <- sp_to_rp_df %>%
+  pivot_longer(cols = c(SIERA, projected_other_SIERA), names_to = "variable", values_to = "value")
+
+ggplot(sp_to_rp_long, aes(x = value, y = Name, fill = variable, alpha=variable)) +
+  geom_bar(stat = "identity", position = "identity", color="black") +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1)) + 
+  labs(title = "Actual SIERA vs. Projected SIERA of Current Starting Pitchers",
+       x = "SIERA",
+       y = "Player") +
+  scale_fill_manual(name = "Variable", values = c("SIERA" = "lightblue", "projected_other_SIERA" = "navy")) +
+ 
+  scale_alpha_manual(values = c("SIERA" = 1, "projected_rp_SIERA" = 1)) +
+  theme_minimal()+
+  guides(fill = guide_legend(title = "SIERA Type"), 
+         alpha ="none" )
+
+rp_to_sp_long <- rp_to_sp_df %>%
+  pivot_longer(cols = c(SIERA, projected_other_SIERA), names_to = "variable", values_to = "value")
+
+ggplot(rp_to_sp_long, aes(x = value, y = Name, fill = variable, alpha=variable)) +
+  geom_bar(stat = "identity", position = "identity", color="black") +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1)) + 
+  labs(title = "Actual SIERA vs. Projected SIERA of Current Relief Pitchers",
+       x = "SIERA",
+       y = "Player") +
+  scale_fill_manual(name = "Variable", values = c("SIERA" = "lightblue", "projected_other_SIERA" = "navy")) +
+  scale_alpha_manual(values = c("SIERA" = 1, "projected_sp_SIERA" = 1)) +
+  theme_minimal()+
+  guides(fill = guide_legend(title = "SIERA Type"), 
+         alpha ="none" )
+```
+
+
+
+```{r}
+repeat_rp_sp_df <- rp_to_sp_df %>% filter(NameASCII %in% c("Dinelson Lamet", "Domingo Tapia", "Jackson Kowar", "Javy Guerra"))
+repeat_sp_rp_df <- sp_to_rp_df %>% filter(NameASCII %in% c( "Marco Gonzales", "Tyler Anderson", "Wade Miley", "Kyle Hendricks"))
+
+
+repeat_rp_sp_df_2023 <- repeat_rp_sp_df[rows_to_keep <- c(1, 2,3,5), ]
+repeat_rp_sp_df_pre_2023 <- repeat_rp_sp_df[rows_to_keep <- c(4, 6,7,8), ]
+repeat_sp_rp_df_new <- repeat_sp_rp_df[rows_to_keep <- c(1, 2,5,9), ]
+repeat_sp_rp_df_old <- repeat_sp_rp_df[rows_to_keep <- c(3, 4,6,7), ]
+
+repeat_sp_rp_df_long <- repeat_sp_rp_df_new %>%
+  pivot_longer(cols = c(SIERA, projected_other_SIERA), names_to = "variable", values_to = "value")
+
+ggplot(repeat_sp_rp_df_long, aes(x = value, y = Name, fill = variable, alpha=variable)) +
+  geom_bar(stat = "identity", position = "identity", color="black") +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1)) + 
+  labs(title = "Actual SIERA vs. Projected SIERA of Current Starting Pitchers post 2022",
+       x = "SIERA",
+       y = "Player") +
+  scale_fill_manual(name = "Variable", values = c("SIERA" = "#000000", "projected_other_SIERA" = "#c6011f")) +
+ 
+  scale_alpha_manual(values = c("SIERA" = 1, "projected_other_SIERA" = 1)) +
+  theme_minimal()+
+  guides(fill = guide_legend(title = "SIERA Type"), 
+         alpha ="none" )
+
+repeat_sp_rp_df_long_old <- repeat_sp_rp_df_old %>%
+  pivot_longer(cols = c(SIERA, projected_other_SIERA), names_to = "variable", values_to = "value")
+
+ggplot(repeat_sp_rp_df_long_old, aes(x = value, y = Name, fill = variable, alpha=variable)) +
+  geom_bar(stat = "identity", position = "identity", color="black") +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1)) + 
+  labs(title = "Actual SIERA vs. Projected SIERA of Current Starting Pitchers pre 2022",
+       x = "SIERA",
+       y = "Player") +
+  scale_fill_manual(name = "Variable", values = c("SIERA" = "#000000", "projected_other_SIERA" = "#c6011f")) +
+ 
+  scale_alpha_manual(values = c("SIERA" = 1, "projected_other_SIERA" = 1)) +
+  theme_minimal()+
+  guides(fill = guide_legend(title = "SIERA Type"), 
+         alpha ="none" )
+
+repeat_rp_sp_long <- repeat_rp_sp_df_2023 %>%
+  pivot_longer(cols = c(SIERA, projected_other_SIERA), names_to = "variable", values_to = "value")
+
+ggplot(repeat_rp_sp_long, aes(x = value, y = Name, fill = variable, alpha=variable)) +
+  geom_bar(stat = "identity", position = "identity", color="black") +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1)) + 
+  labs(title = "Actual SIERA vs. Projected SIERA of Current Relief Pitchers in 2023",
+       x = "SIERA",
+       y = "Player") +
+  scale_fill_manual(name = "Variable", values = c("SIERA" = "#000000", "projected_other_SIERA" = "#c6011f")) +
+  scale_alpha_manual(values = c("SIERA" = 1, "projected_other_SIERA" = 1)) +
+  theme_minimal()+
+  guides(fill = guide_legend(title = "SIERA Type"), 
+         alpha ="none" )
+
+repeat_rp_sp_long_old <- repeat_rp_sp_df_pre_2023 %>%
+  pivot_longer(cols = c(SIERA, projected_other_SIERA), names_to = "variable", values_to = "value")
+
+ggplot(repeat_rp_sp_long_old, aes(x = value, y = Name, fill = variable, alpha=variable)) +
+  geom_bar(stat = "identity", position = "identity", color="black") +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1)) + 
+  labs(title = "Actual SIERA vs. Projected SIERA of Current Relief Pitchers pre 2023",
+       x = "SIERA",
+       y = "Player") +
+  scale_fill_manual(name = "Variable", values = c("SIERA" = "#000000", "projected_other_SIERA" = "#c6011f")) +
+  scale_alpha_manual(values = c("SIERA" = 1, "projected_other_SIERA" = 1)) +
+  theme_minimal()+
+  guides(fill = guide_legend(title = "SIERA Type"), 
+         alpha ="none" )
+```
+
+
+
+##Sum of their Sieras
+```{r}
+sp_rp_proj <-repeat_sp_rp_df %>% group_by(NameASCII) %>% summarize(sum_diff_Siera = mean(diff_in_SIERA))
+
+rp_sp_proj <- repeat_rp_sp_df %>% group_by(NameASCII) %>% 
+  summarize(sum_diff_Siera = mean(diff_in_SIERA))
+```
+
+
+##Using the savant data to see if there are any more insights... using the soft knowledge as well
+```{r}
+#filters our top 8 candidates to switch roles, using the Savant dataset
+top8_savant <- savant_pitch_level %>% filter(player_name %in% c("Hendricks, Kyle", "Gonzales, Marco", "Anderson, Tyler", "Miley, Wade", "Lamet, Dimelson", "Tapia, Domingo", "Kowar, Jackson", "Guerra, Javy"))
+```
+
+##Getting more in depth look at the pitchers who repeatedly showed up on our top 100 in differences between projected SIERA and realized SIERA
+```{r}
+#this data frame is the spin rate, effective velocity and spin axis of our top 8 potential switchers 
+top8_pitchdata <- top8_savant %>% 
+  group_by(player_name, pitch_type) %>%
+  summarize(mean_spin_rate = mean(release_spin_rate, na.rm = TRUE),
+            mean_spin_axis = mean(spin_axis, na.rm = TRUE),
+            mean_effective_speed = mean(effective_speed, na.rm = TRUE))
+
+top8_pitchdata <- top8_pitchdata %>% filter(!(pitch_type == "NA"))
+
+top8_pitchdata
+```
+
+##Code for the graphs 
+```{r}
+repeat_rp_sp_longg <- repeat_rp_sp_df %>%
+  pivot_longer(cols = c(SIERA, projected_other_SIERA), names_to = "variable", values_to = "value")
+# Create a bar chart with side-by-side bars and facets by year
+ggplot(repeat_rp_sp_longg, aes(x = value, y = Name, fill = variable, alpha=variable)) +
+  geom_bar(stat = "identity", position = "identity", color="black") +
+  facet_grid(. ~ Season, scales = "free_x", space = "free_x", labeller = "label_both") +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1)) + 
+  labs(title = "Actual SIERA vs. Projected SIERA of Current Relief Pitchers",
+       x = "SIERA",
+       y = "Player") +
+  scale_fill_manual(name = "Variable", values = c("SIERA" = "#000000", "projected_other_SIERA" = "#c6011f")) +
+  scale_alpha_manual(values = c("SIERA" = 1, "projected_other_SIERA" = 1)) +
+  theme_minimal()+
+  guides(fill = guide_legend(title = "SIERA Type"), 
+         alpha ="none" )
+
+repeat_sp_rp_df_longg <- repeat_sp_rp_df %>%
+  pivot_longer(cols = c(SIERA, projected_other_SIERA), names_to = "variable", values_to = "value")
+
+ggplot(repeat_sp_rp_df_longg, aes(x = value, y = Name, fill = variable, alpha=variable)) +
+  geom_bar(stat = "identity", position = "identity", color="black") +
+  facet_grid(. ~ Season, scales = "free_x", space = "free_x", labeller = "label_both") +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1)) + 
+  labs(title = "Actual SIERA vs. Projected SIERA of Current Starting Pitchers",
+       x = "SIERA",
+       y = "Player") +
+  scale_fill_manual(name = "Variable", values = c("SIERA" = "#000000", "projected_other_SIERA" = "#c6011f")) +
+ 
+  scale_alpha_manual(values = c("SIERA" = 1, "projected_other_SIERA" = 1)) +
+  theme_minimal()+
+  guides(fill = guide_legend(title = "SIERA Type"), 
+         alpha ="none" )
+
+```
+
+
