@@ -1,0 +1,241 @@
+---
+title: "xFantasyPoints"
+author: "Harrison Stanton"
+date: "2024-02-22"
+output: html_document
+---
+
+```{r}
+library(nflreadr)
+library(tidyverse)
+library(dplyr)
+library(ggrepel)
+```
+
+```{r}
+total_roster <- load_rosters(
+  seasons = c(2011:2023),
+  file_type = getOption("nflreadr.prefer", default = "rds")
+)
+
+total_roster <- total_roster %>%
+  filter(position %in% c("WR", "TE"))
+
+total_roster <- total_roster %>% 
+  select("season", "position", "full_name", "gsis_id", "years_exp")
+
+total_roster <- total_roster %>%
+  drop_na(years_exp)
+```
+
+```{r}
+ff_exp_all <- load_ff_opportunity(seasons = 2011:2023, stat_type = "weekly", model_version = "latest")
+
+ff_exp_all <- ff_exp_all %>%
+  group_by(player_id, season) %>%
+  mutate(games = n())
+
+col_to_sum <- c("total_fantasy_points", "total_fantasy_points_exp")
+
+
+wr_te_total_df <- ff_exp_all %>%
+  filter(position %in% c("WR", "TE")) %>%
+  group_by(player_id, season) %>%
+  summarize_at((col_to_sum), sum)
+
+#positive = above expectation
+wr_te_total_df <- wr_te_total_df %>%
+  mutate(diff = total_fantasy_points - total_fantasy_points_exp)
+
+wr_te_total_df$diff <- round(wr_te_total_df$diff, digits = 2)
+
+wr_te_total_df <- wr_te_total_df %>%
+  mutate(percent_over = 100 * round(total_fantasy_points / total_fantasy_points_exp, digits = 4))
+
+games_df <-ff_exp_all %>%
+  filter(position %in% c("WR", "TE")) %>%
+  group_by(player_id) %>%
+  select("games", "full_name", "player_id", "season")
+
+#need to keep unique ones... need it to be unique so that if someone like 
+#Davante plays 6 seasons, he should have 6 entries... rn its way too many. I don't know how unique works well enought to filter it this way 
+#think this should work, but I'm gonna have to get on wifi and reupload all the data frames
+games_df <- games_df %>%
+  group_by(player_id) %>%
+  distinct(season, .keep_all = TRUE)
+
+```
+
+```{r}
+wr_te_total_df <- left_join(wr_te_total_df, games_df, by = c("player_id", "season"))
+```
+
+```{r}
+wr_te_total_df <- wr_te_total_df %>%
+  mutate(
+    ppg = total_fantasy_points / games,
+    xppg = total_fantasy_points_exp / games
+      )
+```
+
+
+```{r}
+rookie_player_id <- total_roster %>% 
+  filter(years_exp == 0)
+```
+
+```{r}
+wr_te_total_df <- wr_te_total_df %>%
+  filter(player_id %in% rookie_player_id$gsis_id)
+```
+
+```{r}
+total_roster <- total_roster %>%
+  filter(gsis_id %in% rookie_player_id$gsis_id)
+```
+
+```{r}
+total_roster <- total_roster %>%
+  rename(player_id = gsis_id)
+```
+
+```{r}
+str(total_roster)
+```
+
+```{r}
+wr_te_total_df$season <- as.integer(wr_te_total_df$season)
+```
+
+
+```{r}
+#just seeing if this works... this should be wr_te_total_df
+new_df <- left_join(wr_te_total_df, total_roster, by = c("player_id", "season"))
+```
+
+```{r}
+rookies_over_120 <- new_df %>%
+  filter(years_exp == 0 & percent_over >= 120 & games >= 5 & ppg <= 13 & ppg>=7)
+
+rookies_over_120_pre2022 <- rookies_over_120 %>%
+  filter(!(years_exp == 0 & season >= 2022))
+```
+
+```{r}
+rookies_over_120_post2022 <- rookies_over_120 %>%
+  filter(years_exp == 0 & percent_over >= 120 & games >= 5 & ppg <= 13 & ppg>=7)
+
+rookies_over_120_post2022 <- rookies_over_120_post2022 %>% 
+  filter(years_exp == 0 & season >= 2022)
+```
+
+
+
+```{r}
+new_df <- new_df %>% 
+  filter(years_exp < 3)
+
+new_df <- new_df %>%
+  filter(player_id %in% rookies_over_120_pre2022$player_id)
+```
+
+```{r}
+new_df$years_exp <- as.factor(new_df$years_exp)
+```
+
+
+
+
+#Working on the frame for the graph
+```{r}
+new_df %>%
+  ggplot(aes(x = full_name.x, y = ppg, color = years_exp)) +
+  geom_point() +
+  scale_color_manual(values = c("0" = "grey85",
+                                "1" = "grey40",
+                                "2"="grey0"))  +
+  ggtitle("Fantasy Points in Years 1, 2 and 3") +
+  ylab("PPG per Game") +
+  xlab("") +
+  coord_flip()
+```
+
+```{r}
+new_df %>%
+  ggplot(aes(x = full_name.x, y = ppg)) +
+  geom_point(aes(fill = years_exp), color = 'black', pch = 21, size = 3) +
+  scale_fill_manual(values = c("0" = "white",
+                                "1" = "grey65",
+                                "2" = "black"),
+                    breaks = levels(new_df$years_exp),  # Specify factor levels
+                    labels = levels(new_df$years_exp)) +
+  ggtitle("Fantasy Points in Years 1, 2 and 3") +
+  ylab("PPG per Game") +
+  xlab("") +
+  coord_flip()
+```
+
+
+
+```{r}
+new_df %>%
+  ggplot(aes(x = full_name.x, y = total_fantasy_points, color = as.factor(years_exp))) +
+  geom_point() +
+  ggtitle("Fantasy Points in Years 1, 2 and 3") +
+  ylab("Total Fantasy Points") +
+  xlab("") +
+  #scale_colour_manual()
+  scale_color_brewer(palette = "Set1", direction = ) +
+  coord_flip()
+```
+
+```{r}
+new_df %>%
+  ggplot(aes(x = full_name.x, y = xppg)) +
+  geom_point(aes(fill = years_exp), color = 'black', pch = 21, size = 3) +
+  scale_fill_manual(values = c("0" = "white",
+                                "1" = "grey65",
+                                "2" = "black"),
+                    breaks = levels(new_df$years_exp),  # Specify factor levels
+                    labels = levels(new_df$years_exp)) +
+  ggtitle("Fantasy Points in Years 1, 2 and 3") +
+  ylab("xPPG per Game") +
+  xlab("") +
+  coord_flip()
+```
+Players from 2022 and 2023 who fit this mold: 
+Rashid Shaheed, Jahan Dotson, Christian Watson, Dontayvion Wicks, A.T. Perry, Tucker Kraft, and Jayden Reed 
+
+
+```{r}
+#Might be a better version of this graph... using jitter instead of just geom_point
+#I think this helps for instances like Doug Baldwin 
+new_df %>%
+  ggplot(aes(x = full_name.x, y = xppg)) +
+  geom_jitter(aes(fill = years_exp), color = 'black', pch = 21, size = 3, width = 0, height = 0.2) +
+  scale_fill_manual(values = c("0" = "white",
+                                "1" = "grey65",
+                                "2" = "black"),
+                    breaks = levels(new_df$years_exp),  # Specify factor levels
+                    labels = levels(new_df$years_exp)) +
+  ggtitle("Fantasy Points in Years 1, 2 and 3") +
+  ylab("xPPG per Game") +
+  xlab("") +
+  coord_flip()
+```
+
+```{r}
+new_df %>%
+  ggplot(aes(x = full_name.x, y = ppg)) +
+  geom_jitter(aes(fill = years_exp), color = 'black', pch = 21, size = 3, width = 0, height = 0.2) +
+  scale_fill_manual(values = c("0" = "white",
+                                "1" = "grey65",
+                                "2" = "black"),
+                    breaks = levels(new_df$years_exp),  # Specify factor levels
+                    labels = levels(new_df$years_exp)) +
+  ggtitle("Fantasy Points in Years 1, 2 and 3") +
+  ylab("PPG per Game") +
+  xlab("") +
+  coord_flip()
+```
+

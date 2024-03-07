@@ -1,0 +1,252 @@
+---
+title: "FF experiments"
+author: "Harrison Stanton"
+date: "2024-02-16"
+output: html_document
+---
+
+```{r}
+library(nflreadr)
+library(tidyverse)
+library(dplyr)
+library(ggrepel)
+```
+
+```{r}
+to_percentage <- function(x) {
+  return(paste0(round(x * 100, 2), "%"))
+}
+```
+
+It would be interesting to look year by year at the dudes who outperformed. Then, I could see how their points per touch changes, total points changes, as well as number of touches changes. I think this would be helpful to look at in terms of understanding what overperforming expectation means.
+
+Also how do I want to filter the data? Bo Melton is on the list of guys who underperformed, but he was only at like -3.5 points, which could easily be a dropped TD or something like that, based on how few reps he had. 
+
+```{r}
+ff_exp <- load_ff_opportunity(seasons = most_recent_season(), stat_type = "weekly", model_version = "latest")
+ff_exp <- ff_exp %>%
+  group_by(player_id) %>%
+  mutate(occurrences = n())
+
+ff_exp_2022 <- load_ff_opportunity(seasons = 2022, stat_type = "weekly", model_version = "latest")
+ff_exp_2022 <- ff_exp_2022 %>%
+  drop_na(player_id) %>%
+  group_by(player_id) %>%
+  mutate(occurrences = n())
+```
+
+```{r}
+ff_exp <- ff_exp %>%
+  drop_na(player_id) %>%
+  group_by(player_id) %>%
+  mutate(occurrences = n())
+```
+
+
+```{r}
+#want to get this into season stats, not week by week ones... need to figure out how to sum every column, grouping by player 
+#want to add games played too... mutate a game played column using cumsum I think is the best bet... or just a count, and add it to that player's name each time
+col_to_sum <- c("total_fantasy_points", "total_fantasy_points_exp")
+
+wr_te_df <- ff_exp %>%  
+  filter(position %in% c("WR", "TE")) %>%
+  group_by(full_name) %>%
+  summarize_at((col_to_sum), sum)
+
+wr_te_2022_df <- ff_exp_2022 %>%  
+  filter(position %in% c("WR", "TE")) %>%
+  group_by(full_name) %>%
+  summarize_at((col_to_sum), sum)
+
+
+#Think we should probably tqke out dudes who didn't play many games
+# wr_te_2022_df <- wr_te_2022_df %>%
+#   filter(rec_fantasy_points >= 120 & occurrences >= 12)
+
+#positive means overperformed, negative means underperformed
+wr_te_df <- wr_te_df %>% 
+  mutate(diff = total_fantasy_points - total_fantasy_points_exp)
+
+wr_te_2022_df <- wr_te_2022_df %>%
+  mutate(diff = total_fantasy_points - total_fantasy_points_exp)
+```
+
+
+```{r}
+wr_te_df <- wr_te_df %>% mutate(percent_change = to_percentage(total_fantasy_points / total_fantasy_points_exp))
+```
+
+
+```{r}
+wr_te_df <- wr_te_df %>%
+  mutate(my_team = ifelse(full_name %in% c("A.T. Perry", "DeVonta Smith", "Jaxon Smith-Njigba", "Chigoziem Okonkwo", "Kadarius Toney", "Rashid Shaheed", "Kayshon Boutte", "Sam LaPorta", "Jelani Woods", "Romeo Doubs"), TRUE, FALSE))
+```
+
+QB data frame
+```{r}
+col_to_sum <- c("total_fantasy_points", "total_fantasy_points_exp")
+
+qb_2023_df <- ff_exp %>%  
+  filter(position == "QB") %>%
+  group_by(full_name) %>%
+  summarize_at((col_to_sum), sum)
+
+qb_2023_df <- qb_2023_df %>% 
+  mutate(diff = total_fantasy_points - total_fantasy_points_exp)
+
+occurrences <- ff_exp %>%
+  filter(position %in% c("QB")) %>%
+  group_by(full_name) %>%
+  summarize(max(occurrences)) %>%
+  drop_na(full_name)
+
+qb_2023_df <- inner_join(occurrences, qb_2023_df, by = 'full_name')
+
+stroud_df <- qb_2023_df %>%
+  filter(full_name == "C.J. Stroud")
+```
+
+
+
+```{r}
+occurrences <- ff_exp %>%
+  filter(position %in% c("WR", "TE")) %>%
+  group_by(full_name) %>%
+  summarize(max(occurrences)) %>%
+  drop_na(full_name)
+
+occurrences_2022 <- ff_exp_2022 %>%
+  filter(position %in% c("WR", "TE")) %>%
+  group_by(full_name) %>%
+  summarize(max(occurrences)) %>%
+  drop_na(full_name)
+
+wr_te_df <- inner_join(wr_te_df, occurrences, by = NULL)
+wr_te_df$occurrences <- wr_te_df$`max(occurrences)`
+wr_te_df <- wr_te_df[, !names(wr_te_df) == "max(occurrences)"]
+
+wr_te_2022_df <- inner_join(wr_te_2022_df, occurrences, by = NULL)
+wr_te_2022_df$occurrences <- wr_te_2022_df$`max(occurrences)`
+wr_te_2022_df <- wr_te_2022_df[, !names(wr_te_2022_df) == "max(occurrences)"]
+```
+
+
+```{r}
+wr_te_df %>%
+  filter(occurrences >= 12) %>%
+  filter(total_fantasy_points >= 120) %>%
+ggplot(aes(x = total_fantasy_points_exp, y = total_fantasy_points)) +
+  geom_point() +
+  #scale_color_brewer(palette = "Set1", direction = -1) +
+  geom_abline(slope = 1, intercept = 0, color = 'red') +
+  geom_label_repel(data = filter(wr_te_df, full_name %in% c("Davante Adams", "Garrett Wilson", "Nico Collins", "Tyreek Hill")), aes(x = total_fantasy_points_exp, y = total_fantasy_points, label = full_name)) +
+  ggtitle("Fantasy Points vs. Expected Fantasy Points") +
+  xlab("Fantasy Points Expected") +
+  ylab("Fantasy Poins") 
+```
+
+```{r}
+wr_te_2022_df %>%
+  filter(occurrences >= 12) %>%
+  filter(rec_fantasy_points >= 120) %>%
+ggplot(aes(x = rec_fantasy_points_exp, y = rec_fantasy_points)) +
+  geom_point() +
+  #scale_color_brewer(palette = "Set1", direction = -1) +
+  geom_abline(slope = 1, intercept = 0, color = 'green') +
+  geom_label_repel(data = filter(wr_te_df, full_name %in% c("George Kittle", "Jaylen Waddle", "Diontae Johnson", "Kyle Pitts")), aes(x = rec_fantasy_points_exp, y = rec_fantasy_points, label = full_name)) +
+  ggtitle("Fantasy Points vs. Expected Fantasy Points") +
+  xlab("Receiving Fantasy Points Expected") +
+  ylab("Receiving Fantasy Poins")
+```
+
+
+```{r}
+wr_te_df %>%
+  filter(my_team == TRUE) %>%
+ggplot(aes(x = full_name, y = diff)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  coord_flip() +
+  geom_text(aes(label = rec_fantasy_points, y = diff / 2)) +
+  ggtitle("Difference between Fantasy Points and Expected Fantasy Points") +
+  ylab("Difference in Reaized vs. Expected")
+  
+```
+
+```{r}
+MJP_team <- c("Sam LaPorta", "Rashid Shaheed", "Kayshon Boutte", "Kadarius Toney", 
+              "Jaxon Smith-Njigba", "DeVonta Smith", "Chigoziem Okonkwo", "A.T.Perry", "Jalen Hurts", "Carson Wentz", "Kenny Pickett", "Javonte Williams", 
+              "Jaleel McLaughlin", "Ty Chandler", "Marcus Mariota", "Mason Rudolph", "Drew Lock", "Tyler Huntley", "Bailey Zappe", "Hendon Hooker", "Tank Bibsby", "Keaton Mitchell", "Zach Charbonnet", "Romeo Doubs", "Jelani Woods")
+```
+
+```{r}
+ff_exp <- ff_exp %>%
+  mutate(my_team = ifelse(full_name %in% MJP_team, TRUE, FALSE))
+```
+
+```{r}
+occurrences_2 <- ff_exp %>%
+  group_by(full_name) %>%
+  summarize(max(occurrences)) %>%
+  drop_na(full_name)
+
+my_team <- ff_exp %>%
+  select("my_team", "full_name") %>%
+  drop_na(full_name)
+
+col_to_sum_2 <- c("total_fantasy_points", "total_fantasy_points_exp", "total_fantasy_points_diff")
+reduced_ff_exp <- ff_exp %>%
+  group_by(full_name) %>%
+  summarize_at((col_to_sum_2), sum)
+
+reduced_player_id <- ff_exp %>%
+  group_by(full_name) %>%
+  select(player_id)
+
+reduced_player_id <- unique(reduced_player_id)
+my_team <- unique(my_team)
+
+reduced_ff_exp <- inner_join(reduced_ff_exp, occurrences_2, by = "full_name")
+reduced_ff_exp <- inner_join(reduced_ff_exp, reduced_player_id, by = "full_name")
+```
+
+
+
+
+My attempt at getting my whole teams expected vs. realized on the same graph... having trouble with the my_team variable atm... was gonna try to arrange them the same way before inner joining and see if that changed anything
+```{r}
+# #df for just expected vs. realized for all positions
+# reduced_ff_exp %>%
+#   #my_team variable didn't transfer over right and I have no idea why...
+#   filter(my_team == TRUE) %>%
+#   #filter(position == 'QB') %>%
+# ggplot(aes(x = full_name, y = total_fantasy_points_diff)) +
+#   geom_bar(stat = "identity", alpha = 0.7) +
+#   coord_flip() +
+#   geom_text(aes(label = total_fantasy_points, y = total_fantasy_points_diff / 2)) +
+#   ggtitle("Difference between Fantasy Points and Expected Fantasy Points") +
+#   ylab("Difference in Reaized vs. Expected")
+  
+```
+
+
+```{r}
+qb_2023_df %>%
+  ggplot(aes(x = total_fantasy_points_exp, y = total_fantasy_points)) +
+    geom_point() +
+    #scale_color_brewer(palette = "Set1", direction = -1) +
+    #geom_point()
+    geom_abline(slope = 1, intercept = 0, color = 'blue') +
+    geom_text_repel(data = qb_2023_df %>% filter(full_name %in% c("C.J. Stroud")), aes(x = total_fantasy_points_exp, y = total_fantasy_points, label = full_name)) +
+    ggtitle("Fantasy Points vs. Expected Fantasy Points") +
+    xlab("Fantasy Points Expected") +
+    ylab("Fantasy Points")
+
+```
+
+
+```{r}
+espn_qbr <- load_espn_qbr(league = c("nfl"), seasons = most_recent_season(), summary_type = c("season"))
+espn_qbr <- espn_qbr %>%
+  filter(season_type == "Regular")
+```
+
