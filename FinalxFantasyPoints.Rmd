@@ -1,0 +1,258 @@
+---
+title: "WR and TE Buy Candidates"
+author: "Harrison Stanton"
+date: "2024-02-22"
+output:
+  html_document: default
+  pdf_document: default
+---
+It’s almost time for the NFL Draft! In dynasty fantasy football, this is one of the most interesting times of the year. How much do I value these prospects coming up? Are they better or worse than the guys already on my roster? Who are players that the fantasy football community is not valuing the way that they should? I’m going to try to shed a little light on potential buy candidates, specifically guys who just finished their rookie or second year at the tight end and wide receiver position. 
+
+As I was researching which players to be trading for this offseason, I took a look at expected fantasy points and realized fantasy points. One thing that caught my eye right away were the names at the top of the list in overperforming expectation, and at the bottom of the list. The results are shown in this graph below.
+
+```{r, echo=FALSE, message=FALSE}
+library(nflreadr)
+library(tidyverse)
+library(dplyr)
+library(ggrepel)
+```
+
+```{r, echo=FALSE}
+total_roster <- load_rosters(
+  seasons = c(2011:2023),
+  file_type = getOption("nflreadr.prefer", default = "rds")
+)
+
+total_roster <- total_roster %>%
+  filter(position %in% c("WR", "TE"))
+
+total_roster <- total_roster %>% 
+  select("season", "position", "full_name", "gsis_id", "years_exp")
+
+total_roster <- total_roster %>%
+  drop_na(years_exp)
+```
+
+```{r, echo=FALSE, message=FALSE}
+ff_exp <- load_ff_opportunity(seasons = most_recent_season(), stat_type = "weekly", model_version = "latest")
+ff_exp <- ff_exp %>%
+  group_by(player_id) %>%
+  mutate(occurrences = n())
+
+ff_exp_2023 <- load_ff_opportunity(seasons = 2023, stat_type = "weekly", model_version = "latest")
+ff_exp_2023 <- ff_exp_2023 %>%
+  drop_na(player_id) %>%
+  group_by(player_id) %>%
+  mutate(occurrences = n())
+
+col_to_sum <- c("total_fantasy_points", "total_fantasy_points_exp")
+
+wr_te_2023_df <- ff_exp_2023 %>%  
+  filter(position %in% c("WR", "TE")) %>%
+  group_by(full_name) %>%
+  summarize_at((col_to_sum), sum)
+
+wr_te_2023_df <- wr_te_2023_df %>%
+  mutate(diff = total_fantasy_points - total_fantasy_points_exp)
+
+occurrences_2023 <- ff_exp_2023 %>%
+  filter(position %in% c("WR", "TE")) %>%
+  group_by(full_name) %>%
+  summarize(max(occurrences)) %>%
+  drop_na(full_name)
+
+wr_te_2023_df <- inner_join(wr_te_2023_df, occurrences_2023, by = NULL)
+wr_te_2023_df$occurrences <- wr_te_2023_df$`max(occurrences)`
+wr_te_2023_df <- wr_te_2023_df[, !names(wr_te_2023_df) == "max(occurrences)"]
+```
+
+```{r, echo = FALSE}
+wr_te_2023_df %>%
+  filter(occurrences >= 12) %>%
+  filter(total_fantasy_points >= 120) %>%
+ggplot(aes(x = total_fantasy_points_exp, y = total_fantasy_points)) +
+  geom_point() +
+  #scale_color_brewer(palette = "Set1", direction = -1) +
+  geom_abline(slope = 1, intercept = 0, color = 'red') +
+  geom_label_repel(data = filter(wr_te_2023_df, full_name %in% c("Davante Adams", "Garrett Wilson", "Nico Collins", "Brandon Aiyuk")), aes(x = total_fantasy_points_exp, y = total_fantasy_points, label = full_name), min.segment.length = 0.05) +
+  ggtitle("Fantasy Points vs. Expected Fantasy Points") +
+  xlab("Fantasy Points Expected") +
+  ylab("Fantasy Poins") 
+```
+
+Obviously, all four names highlighted on the graph are very talented football players. Additionally, Davante Adams and Garrett Wilson suffered from some of the worst quarterback play in the NFL this season. This got me wondering, what does expected fantasy points even tell us? Is this just a descriptive stat that tells us that Nico Collins and Tyreek Hill caught a couple of long touchdown passes that really helped their season totals? Or that a wide receiver suffered from awful quarterback play? Or can overperforming expectation tell us about an individual’s talent? 
+
+ In order to get a better understanding of what expected fantasy points tells, and specifically overperforming expectation, I took a look at rookie wide receivers and tight ends from 2011-2023. The main goal was to see if there was a trend in the guys who overperformed expectation as a rookie, and whether or not that led to more workload over their next two seasons. I filtered down the list of receivers and tight ends using a couple of qualifications: 
+ 
+1. The player outperformed expectation by at least 20% in their rookie year 
+
+
+
+2. The player averaged between 7 and 13 ppg in their rookie year (in a PPR format) [^1]
+
+[^1]: I put a lower and upper cap on this list so that guys who caught one unlikely touchdown pass on the season did not show up on the list, and so that guys like Ja’Marr Chase, who were obviously phenomenal players after their rookie seasons, would not be on the list as everyone already knew he was a valuable player after year 1
+
+3. The player played at least 5 games their rookie year [^2]
+
+[^2]: I put this filter on the data so that guys who had one stellar game but didn’t play besides that would not be on the list. This just leaves less randomness as our sample size on each player is bigger.
+
+
+I was curious to see whether there was a trend from the guys who scored over expectation in their rookie year, specifically whether their efficiency would lead to an increased workload, meaning they would be buy candidates as they are likely to spike in value the next couple of seasons. The graph below shows the trend players who overperformed expectation in their rookie seasons, and what they ended up doing in the next two years.
+
+
+```{r, echo=FALSE}
+ff_exp_all <- load_ff_opportunity(seasons = 2011:2023, stat_type = "weekly", model_version = "latest")
+
+ff_exp_all <- ff_exp_all %>%
+  group_by(player_id, season) %>%
+  mutate(games = n())
+
+col_to_sum <- c("total_fantasy_points", "total_fantasy_points_exp")
+
+
+wr_te_total_df <- ff_exp_all %>%
+  filter(position %in% c("WR", "TE")) %>%
+  group_by(player_id, season) %>%
+  summarize_at((col_to_sum), sum)
+
+#positive = above expectation
+wr_te_total_df <- wr_te_total_df %>%
+  mutate(diff = total_fantasy_points - total_fantasy_points_exp)
+
+wr_te_total_df$diff <- round(wr_te_total_df$diff, digits = 2)
+
+wr_te_total_df <- wr_te_total_df %>%
+  mutate(percent_over = 100 * round(total_fantasy_points / total_fantasy_points_exp, digits = 4))
+
+games_df <-ff_exp_all %>%
+  filter(position %in% c("WR", "TE")) %>%
+  group_by(player_id) %>%
+  select("games", "full_name", "player_id", "season")
+
+games_df <- games_df %>%
+  group_by(player_id) %>%
+  distinct(season, .keep_all = TRUE)
+
+```
+
+```{r, echo=FALSE}
+wr_te_total_df <- left_join(wr_te_total_df, games_df, by = c("player_id", "season"))
+```
+
+```{r, echo=FALSE}
+wr_te_total_df <- wr_te_total_df %>%
+  mutate(
+    ppg = total_fantasy_points / games,
+    xppg = total_fantasy_points_exp / games
+      )
+```
+
+
+```{r, echo=FALSE}
+rookie_player_id <- total_roster %>% 
+  filter(years_exp == 0)
+```
+
+```{r, echo=FALSE}
+wr_te_total_df <- wr_te_total_df %>%
+  filter(player_id %in% rookie_player_id$gsis_id)
+```
+
+```{r, echo=FALSE}
+total_roster <- total_roster %>%
+  filter(gsis_id %in% rookie_player_id$gsis_id)
+```
+
+```{r, echo=FALSE}
+total_roster <- total_roster %>%
+  rename(player_id = gsis_id)
+```
+
+
+```{r, echo=FALSE}
+wr_te_total_df$season <- as.integer(wr_te_total_df$season)
+```
+
+
+```{r, echo=FALSE}
+new_df <- left_join(wr_te_total_df, total_roster, by = c("player_id", "season"))
+```
+
+```{r, echo=FALSE}
+rookies_over_120 <- new_df %>%
+  filter(years_exp == 0 & percent_over >= 120 & games >= 5 & ppg <= 13 & ppg>=7)
+
+rookies_over_120_pre2022 <- rookies_over_120 %>%
+  filter(!(years_exp == 0 & season >= 2022))
+```
+
+```{r, echo=FALSE}
+rookies_over_120_post2022 <- rookies_over_120 %>%
+  filter(years_exp == 0 & percent_over >= 120 & games >= 5 & ppg <= 13 & ppg>=7)
+
+rookies_over_120_post2022 <- rookies_over_120_post2022 %>% 
+  filter(years_exp == 0 & season >= 2022)
+```
+
+
+```{r, echo=FALSE}
+new_df$full_name.x <- ifelse(new_df$player_id == "00-0034766", "Chris Herndon", new_df$full_name.x)
+```
+
+
+```{r, echo=FALSE}
+new_df <- new_df %>% 
+  filter(years_exp < 3)
+
+new_df <- new_df %>%
+  filter(player_id %in% rookies_over_120_pre2022$player_id)
+```
+
+```{r, echo=FALSE}
+new_df$years_exp <- as.factor(new_df$years_exp)
+```
+
+
+```{r, echo=FALSE}
+new_df <- new_df %>%
+  filter(!(player_id == "00-0029209"))
+
+new_df <- new_df %>%
+  group_by(player_id) %>%
+  mutate(diff_xppg_0_to_1 = xppg[years_exp == 1] - xppg[years_exp == 0])
+
+new_df$diff_xppg_0_to_1 <- as.numeric(new_df$diff_xppg_0_to_1)
+
+new_df <- new_df %>%
+  arrange(desc(diff_xppg_0_to_1))
+```
+
+
+```{r, echo=FALSE}
+names <- new_df %>%
+  arrange(desc(diff_xppg_0_to_1)) %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  pull(full_name.x)
+
+names <- rev(names)
+```
+
+
+
+```{r, echo=FALSE}
+new_df %>%
+  ggplot(aes(x = full_name.x, y = xppg)) +
+  geom_jitter(aes(fill = years_exp), color = 'black', pch = 21, size = 3, width = 0, height = 0.2) +
+  ggtitle("Fantasy Points in Years 0, 1 and 2") +
+  scale_x_discrete(limits = names) +
+  ylab("xPPG per Game") +
+  scale_fill_brewer(palette = "RdPu") +
+  xlab("") +
+  coord_flip() +
+  labs(fill = "Years")
+```
+
+
+There seems to be a trend here. Typically, when a receiver or tight end falls within the guidelines I laid out earlier in the article, there is a good chance that this leads to increased workload, and more expected fantasy points a game. Additionally, we see some fantasy superstars on the list with names like A.J. Brown, Calvin Ridley and Tyreek Hill, and other great players like Tyler Lockett and Doug Baldwin. Additionally, upon further research, the players on this list who failed to see an increase in workload or xPPG over their second and third years seem to have pretty obvious reasons as to why they failed to score more. There were injuries, suspensions, and also guys who bounced back and forth between the practice squad and active roster their rookie years, showing that they were probably not a part of their teams long term plans from the beginning. 
+
+That being said, using the same qualifications to find buy candidates whose rookie years were in 2022 or 2023, I was left with seven names: Rashid Shaheed, Jahan Dotson, Christian Watson, Dontayvion Wicks, A.T. Perry, Tucker Kraft, and Jayden Reed. After seeing another year from Jahan Dotson and Christian Watson, I would be hesitant to call them buy candidates at this point because of down years in year 2 for both, which leaves us with the other 5 guys on the list. These five guys are players that I am looking to buy in dynasty formats.
