@@ -1,0 +1,493 @@
+---
+title: "2022hvt"
+author: "Harrison Stanton"
+date: "2024-06-24"
+output: html_document
+---
+RANKS ARE DECIDED BY PPG, WITH A MINIMUM GP OF 9. THIS FACTORS OUT DUDES LIKE BREECE HALL WHO GOT HURT AFTER 7 GAMES, GUYS WHO HAD ONE BOOM GAME.
+PPR SCORING, NO SPECIAL TEAMS POINTS.
+LATERALS ARE NOT ACCOUNTED FOR IN THIS DATASET.
+Numbers are all checked for RB1-RB3, I'm confident my stuff is right over Fantasy Pros 
+```{r, message=FALSE}
+library(nflfastR)
+library(tidyverse)
+library(dplyr)
+library(nflreadr)
+library(knitr)
+library(kableExtra)
+```
+
+```{r, message=FALSE}
+#I need to check this out again, and why I downloaded 2 pbp files. I think it's just for the pass over expectation stuff, which I need to put in another doc.
+pbp_2022_rbs <- load_pbp(2022)
+roster_2022 <- fast_scraper_roster(2022)
+ff_2022 <- load_ff_opportunity(2022)
+```
+
+#adding player IDs to roster that were missed
+```{r}
+#Brob, breece, Kenneth Walker, 
+roster_2022 <- roster_2022 %>%
+  mutate(pfr_id = if_else(full_name == "Breece Hall", "HallBr03", pfr_id),
+         pfr_id = if_else(full_name == "Kenneth Walker", "WalkKe00", pfr_id),
+         pfr_id = if_else(full_name == "Brian Robinson", "RobiBr01", pfr_id),
+         pfr_id = if_else(full_name == "Patrick Taylor", "TaylPa01", pfr_id),
+         pfr_id = if_else(full_name == "Deon Jackson", "JackDe02", pfr_id),
+         pfr_id = if_else(full_name == "Isiah Pacheco", "PachIs00", pfr_id),
+         pfr_id = if_else(full_name == "Jaylen Warren", "WarrJa01", pfr_id),
+         pfr_id = if_else(full_name == "James Cook", "CookJa01", pfr_id),
+         pfr_id = if_else(full_name == "Dameon Pierce", "PierDa01", pfr_id),
+         pfr_id = if_else(full_name == "Dontrell Hilliard", "HillDo00", pfr_id),
+         pfr_id = if_else(full_name == "Tyler Allgeier", "AllgTy00", pfr_id),
+         pfr_id = if_else(full_name == "Rachaad White", "WhitRa01", pfr_id),
+         pfr_id = if_else(full_name == "Alec Ingold", "IngoAl01", pfr_id))
+```
+
+
+#games played done well
+```{r}
+snap_counts_2022 <- load_snap_counts(
+  seasons = 2022,
+  file_type = getOption("nflreadr.prefer", default = "rds")
+)
+snap_counts_2022 <- snap_counts_2022 %>% 
+  filter(position == "RB" | position == "FB")
+```
+
+
+```{r}
+snap_counts_2022 <- snap_counts_2022 %>% 
+  filter(game_type == "REG") %>%
+  group_by(pfr_player_id) %>%
+  mutate(games = n())
+
+games_2022_df <- snap_counts_2022 %>%
+  select(player, pfr_player_id, games)
+
+games_2022_df <- games_2022_df %>%
+  distinct(player, .keep_all = TRUE)
+```
+
+
+#TrapPercentage doc code
+```{r}
+#code from my TrapPercentage doc... I lost the Rank column from hvt_tt_df... I have no idea where it went
+#I need to have that, because part of my logic is studying which backfields supported multiple guys 
+ff_2022 <- ff_2022 %>%
+  filter(week < 19)
+
+# I wonder if this worked better for games played than my other code did... gotta check Juz
+ff_2022 <- ff_2022 %>%
+  group_by(player_id) %>%
+  mutate(occurrences = n())
+
+ff_2022 <- ff_2022 %>%
+  drop_na(player_id) %>%
+  group_by(player_id) %>%
+  mutate(occurrences = n())
+
+ff_2022 <- ff_2022 %>% rename(gsis_id = player_id)
+
+ff_2022 <- ff_2022 %>% filter(position == "RB")
+
+col_to_sum <- c("total_fantasy_points", "total_fantasy_points_exp")
+
+rb_2022_df <- ff_2022 %>%  
+  group_by(gsis_id) %>%
+  summarize_at((col_to_sum), sum)
+```
+
+
+
+```{r}
+#create a new column that has who caught or rushed in the same column
+pbp_2022_rbs <- pbp_2022_rbs %>%
+  mutate(
+    rush_receiver_id = case_when(
+      is.na(receiver_player_id) & is.na(rusher_player_id) ~ 'NA',
+      is.na(receiver_player_id) ~ rusher_player_id,
+      TRUE ~ receiver_player_id
+    )
+  )
+```
+
+#back to what I most recently wrote
+```{r}
+roster_2022 <- roster_2022 %>% select(position, full_name, gsis_id, pfr_id, team)
+roster_2022 <- roster_2022 %>% filter(position == "RB")
+roster_2022 <- roster_2022 %>%
+  rename(pfr_player_id = pfr_id)
+```
+
+```{r}
+pbp_2022_rbs <- pbp_2022_rbs %>%
+  filter(rush_receiver_id %in% roster_2022$gsis_id)
+
+pbp_2022_rbs <- pbp_2022_rbs %>%
+  drop_na(rush_receiver_id)
+```
+
+
+```{r}
+#this factors out targets that weren't caught 
+pbp_2022_rbs <- pbp_2022_rbs %>%
+  filter(!(is.na(receiving_yards) & !(is.na(receiver_player_id)))) %>%
+  filter(is.na(two_point_conv_result)) %>%
+  filter(season_type == "REG")
+```
+
+
+```{r}
+#I need to figure out what I'm going to joing these two on, because this df has a different player ID 
+#this was just called games_maybe, is now games_df again
+games_2022_df <- left_join(roster_2022, games_2022_df, by = "pfr_player_id")
+```
+
+
+```{r, message=FALSE}
+tt_2022_all <- pbp_2022_rbs %>%
+  group_by(receiver_player_id, rusher_player_id) %>%
+  filter(is.na(two_point_conv_result)) %>%
+  filter(!(is.na(receiving_yards) & !(is.na(receiver_player_id)))) %>%
+  summarize(Carries_or_catches = n())
+
+
+hvt_2022_all <- pbp_2022_rbs %>%
+  group_by(receiver_player_id, rusher_player_id) %>%
+  filter((!(is.na(rusher_player_id)) & yardline_100 <= 10) | !(is.na(receiver_player_id))) %>%
+  summarize(High_value_touches = n()) 
+```
+
+```{r}
+teams <- roster_2022 %>%
+  distinct(team, .keep_all = TRUE) %>%
+  pull(team)
+```
+
+```{r}
+tt_2022_all$receiver_player_id <- ifelse(is.na(tt_2022_all$receiver_player_id), tt_2022_all$rusher_player_id, tt_2022_all$receiver_player_id)
+
+tt_2022_all$rusher_player_id <- ifelse(is.na(tt_2022_all$rusher_player_id), tt_2022_all$receiver_player_id, tt_2022_all$rusher_player_id)
+
+tt_2022_all <- tt_2022_all %>%
+  group_by(receiver_player_id) %>%
+  mutate(Total_touches = sum(Carries_or_catches)) %>%
+  ungroup()
+```
+
+```{r}
+tt_2022_all <- tt_2022_all %>%
+  distinct(receiver_player_id, .keep_all = TRUE)
+
+
+tt_2022_all <- tt_2022_all %>%
+  select(receiver_player_id, Total_touches)
+
+tt_2022_all <- tt_2022_all %>% rename(gsis_id = receiver_player_id)
+```
+
+```{r}
+hvt_2022_all$receiver_player_id <- ifelse(is.na(hvt_2022_all$receiver_player_id), hvt_2022_all$rusher_player_id, hvt_2022_all$receiver_player_id)
+
+hvt_2022_all$rusher_player_id <- ifelse(is.na(hvt_2022_all$rusher_player_id), hvt_2022_all$receiver_player_id, hvt_2022_all$rusher_player_id)
+
+hvt_2022_all <- hvt_2022_all %>%
+  group_by(receiver_player_id) %>%
+  mutate(Total_HVT = sum(High_value_touches)) %>%
+  ungroup()
+```
+
+```{r}
+hvt_2022_all <- hvt_2022_all %>%
+  distinct(receiver_player_id, .keep_all = TRUE)
+
+
+hvt_2022_all <- hvt_2022_all %>%
+  select(receiver_player_id, Total_HVT)
+
+hvt_2022_all <- hvt_2022_all %>% rename(gsis_id = receiver_player_id)
+```
+
+```{r}
+#High value + total touch data frame
+hvt_tt_df <- left_join(roster_2022, tt_2022_all, by = "gsis_id")
+
+hvt_tt_df <- left_join(hvt_tt_df, hvt_2022_all, by = "gsis_id")
+#trying to find an efficient way to get number of games played in during the season into this thing... not sure how to do that
+#I think I need to start by adding another column that's rusher_or_receiver,
+#then do something like if(rusher_or_receiver_id) %in% rb_df (a list of all running backs), then keep it
+#then group_by(rusher_or_receiver_id, week) and count the number of weeks that they played in... hoping this last step works
+```
+
+```{r}
+hvt_tt_df <- left_join(hvt_tt_df, games_2022_df %>% select("gsis_id", "games"), by = "gsis_id")
+```
+
+```{r}
+hvt_tt_df <- hvt_tt_df %>% 
+  mutate(
+    HVT_per_game = Total_HVT / games,
+    Touches_per_game = Total_touches / games,
+    TRAP = (Total_touches - Total_HVT) / Total_touches
+           )
+# I think if I'm gonna do this, it needs to be at the very end, not here
+# hvt_tt_df <- hvt_tt_df %>% drop_na(Total_touches, Total_HVT)
+```
+
+random limit I decided... the problem that I run into sometimes is guys who play in more games, but don't get touches in all of them. For instance, Kyle Jus... he played in like 16 or 17 but only touched the ball in like 10, which makes his per game numbers a little off
+this filter is to try and make sure that all the people who have a game count on here actually played in that many games... I needed to use touches/game because I want to update this each week, so I can't just use how many games they play in or touches they have
+I think I could add to the filter what game of the season it is too... maybe like a max(week) column, then games played / total games >= .75 might help this too... not sure though tbh, this is a little jank 
+
+```{r}
+# hvt_tt_df <- hvt_tt_df %>% filter(Touches_per_game >= 8)
+```
+If I'm gonna do this, it needs to be at the very end, not here
+
+#combining hvt_tt_df and rb_df so I can sort by rank in the later steps 
+```{r}
+hvt_tt_df <- left_join(hvt_tt_df, rb_2022_df, by = "gsis_id")
+```
+
+```{r}
+#this will have to change once 2024 starts
+pbp_2022_week1 <- pbp_2022_rbs %>%
+  filter(week == 1)
+```
+
+
+```{r, message=FALSE}
+tt_2022_week <- pbp_2022_week1 %>%
+  group_by(receiver_player_id, rusher_player_id) %>%
+  filter(is.na(two_point_conv_result)) %>%
+  filter(!(is.na(receiving_yards) & !(is.na(receiver_player_id)))) %>%
+  summarize(Carries_or_catches = n())
+
+
+hvt_2022_week <- pbp_2022_week1 %>%
+  group_by(receiver_player_id, rusher_player_id) %>%
+  filter((!(is.na(rusher_player_id)) & yardline_100 <= 10) | !(is.na(receiver_player_id))) %>%
+  summarize(High_value_touches = n()) 
+```
+
+
+```{r}
+tt_2022_week$receiver_player_id <- ifelse(is.na(tt_2022_week$receiver_player_id), tt_2022_week$rusher_player_id, tt_2022_week$receiver_player_id)
+
+tt_2022_week$rusher_player_id <- ifelse(is.na(tt_2022_week$rusher_player_id), tt_2022_week$receiver_player_id, tt_2022_week$rusher_player_id)
+
+tt_2022_week <- tt_2022_week %>%
+  group_by(receiver_player_id) %>%
+  mutate(Total_touches = sum(Carries_or_catches)) %>%
+  ungroup()
+```
+
+```{r}
+tt_2022_week <- tt_2022_week %>%
+  distinct(receiver_player_id, .keep_all = TRUE)
+
+
+tt_2022_week <- tt_2022_week %>%
+  select(receiver_player_id, Total_touches)
+
+tt_2022_week <- tt_2022_week %>% rename(gsis_id = receiver_player_id)
+```
+
+High value touches section:
+```{r}
+hvt_2022_week$receiver_player_id <- ifelse(is.na(hvt_2022_week$receiver_player_id), hvt_2022_week$rusher_player_id, hvt_2022_week$receiver_player_id)
+
+hvt_2022_week$rusher_player_id <- ifelse(is.na(hvt_2022_week$rusher_player_id), hvt_2022_week$receiver_player_id, hvt_2022_week$rusher_player_id)
+
+hvt_2022_week <- hvt_2022_week %>%
+  group_by(receiver_player_id) %>%
+  mutate(Total_HVT = sum(High_value_touches)) %>%
+  ungroup()
+```
+
+```{r}
+hvt_2022_week <- hvt_2022_week %>%
+  distinct(receiver_player_id, .keep_all = TRUE)
+
+
+hvt_2022_week <- hvt_2022_week %>%
+  select(receiver_player_id, Total_HVT)
+
+hvt_2022_week <- hvt_2022_week %>% rename(gsis_id = receiver_player_id)
+```
+
+```{r}
+#High value + total touch data frame
+hvt_tt_week <- left_join(roster_2022, tt_2022_week, by = "gsis_id")
+
+hvt_tt_week <- left_join(hvt_tt_week, hvt_2022_week, by = "gsis_id")
+```
+
+```{r}
+hvt_tt_week <- hvt_tt_week %>% filter(!is.na(Total_touches))
+```
+
+```{r}
+hvt_tt_week$Total_HVT <- ifelse(is.na(hvt_tt_week$Total_HVT), 0, hvt_tt_week$Total_HVT)
+```
+
+```{r}
+hvt_tt_week <- hvt_tt_week %>% rename(touches_week1 = Total_touches, HVT_week1 = Total_HVT)
+```
+
+#final table to output
+```{r}
+#the games is still a little messed up on this... gotta check that before I tweet this out 
+#I don't think there's a perfect way to do this tbh... I might just need to put how many they have this week and how many total
+#I should try doing this now that i have the pbp_2023_all... this might work better bc then if there were targets that would be included as well... might make this just a tad more accurate 
+output_df <- left_join(hvt_tt_df, hvt_tt_week %>% select(gsis_id, touches_week1, HVT_week1), by = "gsis_id")
+output_df <- output_df %>% arrange(desc(HVT_week1))
+output_df <- output_df %>% select(full_name, team, HVT_week1, touches_week1, Total_HVT, Total_touches, TRAP,  games)
+```
+
+
+
+Another thing I want to figure out tomorrow is looking at Pass Rate Over Expectation (PROE). In column 371 and 372, they have xpass, which is the probability that a team passes on that play, and then pass_oe, which was -xpass if they ran the ball, and 1-xpass if they passed. I think then their PROE is just the sum of the pass_oe. I have to look this up though to be sure, and compare with people who already calculated these numbers. 
+
+
+#fixing NAs in hvt_tt_df, back to HVT stuff.
+```{r}
+hvt_tt_df <- hvt_tt_df %>% mutate_at(vars(Total_touches, Total_HVT, games, HVT_per_game, Touches_per_game, TRAP, total_fantasy_points, total_fantasy_points_exp), ~coalesce(., 0))
+```
+
+#recreating rank variable... no idea where it went
+```{r}
+hvt_tt_df <- hvt_tt_df %>% 
+  mutate(ppg = total_fantasy_points / games)
+
+hvt_tt_df$ppg <- ifelse(hvt_tt_df$ppg == "NaN", 0, hvt_tt_df$ppg)
+```
+
+```{r}
+#should I put a games limit on this? 
+hvt_tt_df <- hvt_tt_df %>%
+  distinct(gsis_id, .keep_all = TRUE)
+
+hvt_tt_df <- hvt_tt_df %>%
+  arrange(desc(ppg))
+```
+
+```{r}
+#I'm gonna throw in a games played of 9, feels right to play more than half the season... open to changing this though
+#gotta remember that these are stored as characters and not numbers rn
+temp_df <- hvt_tt_df %>%
+  filter(games > 8) %>%
+  mutate(Pos_rank = case_when(
+    row_number() <= 36 ~ as.character(row_number()),  # Label with row number as string
+    TRUE ~ "other"  # Label the rest as "other"
+  ))
+
+hvt_tt_df <- hvt_tt_df %>%
+  left_join(temp_df %>% select(gsis_id, Pos_rank), by = "gsis_id")
+
+hvt_tt_df <- hvt_tt_df %>%
+  mutate(Pos_rank = ifelse(is.na(Pos_rank), "other", Pos_rank))
+```
+
+
+
+```{r}
+hvt_tt_df <- hvt_tt_df %>% 
+  mutate(Rank = case_when(
+    as.numeric(Pos_rank) <=12 ~ "RB1",
+    as.numeric(Pos_rank) <=24 ~ "RB2",
+    as.numeric(Pos_rank) <= 36 ~ "RB3",
+    TRUE ~ "other"
+  ))
+```
+
+
+```{r}
+#I might need to delay this first, get everything sorted out tbh
+hvt_tt_df <- hvt_tt_df %>%
+  filter(Total_touches != 0)
+```
+
+
+#backfield research
+```{r}
+team_backfields_2022 <- hvt_tt_df %>%
+  group_by(team) %>%
+  summarise(HVT_per_game = sum(Total_HVT) / 17,
+            Total_HVT = sum(Total_HVT),
+            Total_touches = sum(Total_touches),
+            RB_count = sum(Rank %in% c("RB1", "RB2", "RB3")),
+            #multiple_RB = TRUE if support multiple top 36 backs 
+            multiple_RB = ifelse(RB_count >1, TRUE, FALSE)
+            )
+
+elite_team_backfields_2022 <- team_backfields_2022 %>%
+  filter(RB_count > 1)
+```
+feel like from this info, I'm looking for HVT/game that are greater than 6.4
+
+```{r}
+team_backfields_2022 %>%
+  filter(HVT_per_game >=5.3)
+```
+
+
+```{r}
+RB1_3_df <- hvt_tt_df %>%
+  filter(Rank != "other")
+
+over_2.3_HVT_df <- hvt_tt_df %>%
+  filter(HVT_per_game >= 2.3 & Rank == "other") 
+  
+```
+
+Taking away from this research is that we're looking for backfields that have roughly 7 HVT per game, or at least can support 2 RBs getting roughly 3 HVT/game at least. We can't have a bellcow back, and we need HVT to be split up. Probably the dude getting fewer touches needs more HVT (like Gibbs and Monty).
+
+Kind of along with this, it would be interesting to see how sticky HVT/game are at the individual level as well as the team level. I think that's going to be what I look at next
+
+```{r}
+team_backfields_2022 %>%
+  ggplot(aes(y = HVT_per_game)) +
+  geom_boxplot()
+```
+
+```{r}
+team_backfields_2022 %>%
+  ggplot(aes(y = Total_touches/17)) +
+  geom_boxplot()
+```
+
+
+```{r}
+Q1 <- quantile(team_backfields_2022$HVT_per_game, 0.25)
+Q3 <- quantile(team_backfields_2022$HVT_per_game, 0.75)
+
+print(Q1)
+print(Q3)
+```
+
+
+#boxplot for touches by position rank
+```{r}
+#this would be a cool graph to make with all the RB1s, RB2s, and RB3s for like the last 5 years
+hvt_tt_df %>%
+  filter(Rank != "other") %>%
+  ggplot(aes(y=HVT_per_game, fill = Rank))+
+  geom_boxplot() +
+  ylab("HVT per game") +
+  ggtitle("HVT per game by Rank")
+```
+
+```{r}
+hvt_tt_df %>%
+  filter(Rank != "other") %>% 
+  ggplot(aes(y=Touches_per_game, fill = Rank))+
+  geom_boxplot() +
+  ylab("Touches per game") +
+  ggtitle("Touches per game by Rank")
+```
+
+I think the outliers here are super interesting. If you look at the guys who are outliers below (Jerick McKinnon, CEH, D'Andre Swift) they're all dudes who get a stupid amount of HVT/game, again backing up their importance. And the outlier above, BRob, has like 1 HVT/game, which is like the definition of a trap back, which also proves why you try to fade some of those guys 
+
+I wonder if I could do something like True Shooting percentage... in the NBA that's 3 point makes * 1.5 + 2 point makes / total shot attempts... some sort of weight that shows how many total touches you got at a valued rate 
+
+

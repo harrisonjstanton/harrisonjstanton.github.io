@@ -1,0 +1,298 @@
+---
+title: "Weighted Opportunity Data Frame"
+author: "Harrison Stanton"
+date: "2024-06-26"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(nflfastR)
+library(nflreadr)
+```
+
+```{r, message=FALSE}
+ff_2023 <- load_ff_opportunity(2023)
+```
+
+```{r}
+week <- toString(max(ff_2023$week))
+season <- toString(max(ff_2023$season))
+```
+
+```{r}
+roster_2023 <- load_rosters(2023) %>%
+  filter(depth_chart_position == "RB")
+pbp_2023_rbs <- load_pbp(2023)
+```
+
+
+#games played done well
+```{r}
+snap_counts <- load_snap_counts(
+  seasons = most_recent_season(),
+  file_type = getOption("nflreadr.prefer", default = "rds")
+)
+# snap_counts <- snap_counts %>% 
+#   filter(position == "RB" | position == "FB")
+snap_counts <- snap_counts %>%
+  filter(position == "RB")
+
+```
+
+
+```{r}
+snap_counts <- snap_counts %>% 
+  filter(game_type == "REG") %>%
+  group_by(pfr_player_id) %>%
+  mutate(games = n())
+
+games_df <- snap_counts %>%
+  select(player, pfr_player_id, games)
+
+games_df <- games_df %>%
+  distinct(player, .keep_all = TRUE)
+```
+
+
+#rusher_receiver_id
+```{r}
+#second attempt
+pbp_2023_rbs <- pbp_2023_rbs %>%
+  mutate(
+    rush_receiver_id = case_when(
+      is.na(receiver_player_id) & is.na(rusher_player_id) ~ 'NA',
+      is.na(receiver_player_id) ~ rusher_player_id,
+      TRUE ~ receiver_player_id
+    )
+  )
+```
+
+
+```{r}
+#only pass or run plays from the regular seasonseason
+#it seems like this filter (the run or pass) takes care of penalties that were overturned. 
+#the ones that stay in the df are ones that were after the play which get added on, like a late hit
+pbp_2023_rbs <- pbp_2023_rbs %>%
+  filter(play_type == "run" | play_type == "pass") %>%
+ # filter(is.na(penalty_player_id)) %>%
+  filter(season_type == "REG") %>%
+  filter(is.na(two_point_conv_result))
+```
+
+
+
+```{r}
+#this should get us to the point where it's only running backs involved, and it's pass or run plays...
+#still gotta check penalties
+pbp_2023_rbs <- pbp_2023_rbs %>%
+  filter(rush_receiver_id %in% roster_2023$gsis_id)
+```
+
+
+#calculating touches for each RB
+```{r}
+result <- pbp_2023_rbs %>%
+  group_by(rush_receiver_id) %>%
+  summarize(
+    rz_targets = sum(yardline_100 < 20 & receiver_player_id == rush_receiver_id, na.rm = TRUE),
+    rz_carries = sum(yardline_100 < 20 & rusher_player_id == rush_receiver_id, na.rm = TRUE),
+    nrz_carries = sum(yardline_100 >= 20 & rusher_player_id == rush_receiver_id, na.rm = TRUE),
+    nrz_targets = sum(yardline_100 >= 20 & receiver_player_id == rush_receiver_id, na.rm = TRUE)
+  )
+```
+
+
+```{r}
+temp_df <- roster_2023 %>%
+  select(gsis_id, full_name, team, pfr_id)
+
+temp_df <- temp_df %>%
+  rename(rush_receiver_id = gsis_id,
+         pfr_player_id = pfr_id)
+
+result_df <-left_join(temp_df, result, by = "rush_receiver_id")
+
+result_df <- result_df %>%
+  drop_na(nrz_carries)
+```
+
+```{r}
+result_df <- left_join(result_df, games_df, by = "pfr_player_id")
+```
+
+```{r}
+#fixed... same as Ryan Heath's now... love that 
+result_df <- result_df %>%
+  mutate(weighted_opps = 1.3*rz_carries + 2.25*rz_targets + 0.48*nrz_carries + 1.43*nrz_targets,
+         wo_per_g = weighted_opps / games)
+```
+
+```{r}
+ff_2023 <- ff_2023 %>%
+  filter(week < 19)
+```
+
+```{r}
+ff_2023 <- ff_2023 %>% 
+  rename(rush_receiver_id = player_id)
+```
+
+```{r}
+ff_2023 <- ff_2023 %>% filter(position == "RB")
+
+col_to_sum <- c("total_fantasy_points")
+
+points_df <- ff_2023 %>%  
+  group_by(rush_receiver_id) %>%
+  summarize_at((col_to_sum), sum)
+```
+
+```{r}
+result_df <- left_join(result_df, points_df, by = "rush_receiver_id")
+```
+
+```{r}
+result_df <- result_df %>%
+  mutate(ppg = total_fantasy_points / games)
+```
+
+```{r}
+# Original data frame
+result_df <- result_df %>%
+  # Arrange by ppg for temporary ranking
+  arrange(desc(ppg))
+
+# Filter out players with fewer than 8 games for ranking purposes
+result_df <- result_df %>%
+  filter(games >= 8) %>%
+  arrange(desc(ppg))
+
+# Calculate ranks
+rank_bins <- cut(seq(1, nrow(result_df)), 
+                 breaks = c(0, 13, 25, 37, nrow(result_df)), 
+                 labels = c("RB1", "RB2", "RB3", "Other"), 
+                 right = FALSE)
+
+# Create a temporary data frame with ranks
+result_df <- result_df %>%
+  mutate(Rank = as.character(rank_bins))
+```
+
+```{r}
+result_df <- result_df %>%
+  rename(gsis_id = rush_receiver_id)
+```
+
+
+```{r}
+output_wo_df <- result_df %>%
+  select(player, team, games, ppg, wo_per_g, Rank)
+
+output_wo_df <- output_wo_df %>%
+  drop_na(player)
+
+output_wo_df <- output_wo_df %>%
+  filter(player != "Devon Achane")
+
+output_wo_df <- output_wo_df %>%
+  mutate(diff = ppg - wo_per_g)
+```
+`
+
+```{r}
+# Original data frame
+output_wo_df <- output_wo_df %>%
+  # Arrange by ppg for temporary ranking
+  arrange(desc(ppg))
+
+# Filter out players with fewer than 8 games for ranking purposes
+temp_df <- output_wo_df %>%
+  filter(games >= 8) %>%
+  arrange(desc(ppg))
+
+# Calculate ranks
+rank_bins <- cut(seq(1, nrow(temp_df)), 
+                 breaks = c(0, 13, 25, 37, nrow(temp_df)), 
+                 labels = c("RB1", "RB2", "RB3", "Other"), 
+                 right = FALSE)
+
+# Create a temporary data frame with ranks
+temp_df <- temp_df %>%
+  mutate(Rank = as.character(rank_bins))
+
+# Merge the ranks back into the original data frame
+output_wo_df <- output_wo_df %>%
+  left_join(temp_df %>% select(gsis_id, Rank), by = "gsis_id")
+
+# Ensure players with fewer than 8 games are classified as "Other"
+output_wo_df$Rank <- ifelse(is.na(output_wo_df$Rank), "Other", output_wo_df$Rank)
+```
+
+
+```{r}
+output_wo_df <- output_wo_df %>%
+  arrange(desc(wo_per_g))
+```
+
+
+
+
+
+
+
+
+
+#Weighted Opportunities graphs
+I like both of these graphs quite a bit... think they're both helpful visually to see kind of what we're looking for/what is good and what's bad. 
+```{r}
+output_wo_df %>%
+  ggplot(aes(x = wo_per_g, y = ppg)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    x = "Weighted Opportunities per game",
+    y = "PPG",
+    title = "Weighted Opportunities per game vs. PPG"
+  )
+```
+
+It would be interesting to look at past years for weighted opportunities as well... Ryan Heath's article talks about regressing to "your mean"... want to see what Raheem Mostert/Derrick Henry/guys like that's means actually look like 
+
+How should I calculate career difference in PPG and WO/G?
+
+
+```{r}
+output_wo_df %>%
+  filter(games >= 8 & wo_per_g >= 1.5) %>%
+  ggplot(aes(y = diff)) +
+  geom_boxplot() +
+  labs(
+    y = "PPG - WO/G",
+    title = "Efficiency analysis for 2023 Running Backs"
+  ) +
+  theme(
+    axis.title.x = element_blank(),  # Remove x-axis title
+    axis.text.x = element_blank(),   # Remove x-axis text
+    axis.ticks.x = element_blank()   # Remove x-axis ticks
+  )
+```
+
+```{r}
+quantiles <- output_wo_df %>%
+  filter(games >= 8 & wo_per_g >= 1.5) %>%
+  select(diff) %>%
+  unlist() %>% # Convert the selected column to a vector
+  quantile(probs = c(0.25, 0.75))
+
+# Print the results
+quantiles
+```
+
+
+#code for attempting to merge the WO_per_game to the other Df used in the app
+```{r}
+rb_stats_df <- left_join(rb_stats_df, result_df %>% select(gsis_id, weighted_opps, wo_per_g), by = "gsis_id")
+```
+

@@ -1,0 +1,167 @@
+---
+title: "PassOverExpectation"
+author: "Harrison Stanton"
+date: "2024-06-23"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(nflfastR)
+library(tidyverse)
+library(dplyr)
+library(nflreadr)
+library(knitr)
+library(kableExtra)
+```
+
+```{r}
+pbp_2023_all <- load_pbp(2023)
+```
+
+
+#Pass OE stuff... should move this into a new doc
+```{r}
+#this is just wrong... not quite right, and I'm not sure why tbh.
+#gotta figure this out in the morning... this would be a dope piece to add to my tweets
+#I think I might've missed something in the filter statements... no way that every team was below expectation bruh
+#maybe I didn't filter out kickoffs? or extra points? or something like that jacked this all up
+total_pass_oe <- pbp_2023_all %>%
+  filter(posteam == "KC") %>%
+  filter(play_type == "run" | play_type == "pass") %>%
+  summarize(total_pass_oe = mean(pass_oe, na.rm = TRUE)) %>%
+  pull(total_pass_oe)
+
+# Print the result
+print(total_pass_oe)
+```
+
+i think the last thing I gotta do is figure out the actual pass rate... that shouldn't be hard just using play_type... just filter out to where plays are run or pass, then average the pass plays. The only thing I'll have to look up is if punts stay in that sample or not.
+```{r}
+total_xpass <- pbp_2023_all %>%
+  filter(posteam == "KC") %>%
+  filter(play_type == "run" | play_type == "pass") %>%
+  summarize(total_xpass = mean(xpass, na.rm = TRUE)) %>%
+  pull(total_xpass)
+
+# Print the result
+print(total_xpass)
+```
+
+```{r}
+total_pass_oe <- pbp_2023_all %>%
+  filter(posteam == "KC") %>%
+  filter(play_type == "run" | play_type == "pass") %>%
+  summarize(total_pass_oe = mean(pass_oe, na.rm = TRUE)) %>%
+  pull(total_pass_oe)
+
+# Print the result
+print(total_pass_oe)
+```
+
+
+Just trying to figure out what could be making these numbers so jank... I'm gonna try to filter out penalties that were accepted
+-I might need to do this for my trap stuff too tbh. That would probably be an accurate thing to do in order to analyze what actually happened
+
+
+Gonna make this only the Chiefs from week 1 and see if I can tell why this is so weird
+Bro... I filtered this so it was only the freaking plays running backs were involved in. That's why this is so jank. That's why I have this as the Chiefs only ran freaking 20 plays week 1 when it was closer to 67
+```{r}
+#this will still have kickoffs, extra points, and punts. that shouldn't affect anything tho, bc xpass on those plays is NA
+#when I did filter so it was just run/pass plays, it matched with ESPN's website for the number of plays... I feel good about that. Just need to remember to filter out penalty plays too, I don't think those should be in the sample. 
+pbp_2023_week1_kc <- pbp_2023_all %>%
+  filter(posteam == "KC") %>%
+  filter(week == 1) %>%
+  filter(play_type == "run" | play_type == "pass") 
+
+```
+
+#attempt at all teams PROE
+I think this table is mostly just going to be talking about gamescript for individual games... feel like I'll see team's season long tendencies by week 4/5, and then also if I'm talking about they were playing from behind, had a super high xpass the whole week, not worried as much, stuff like that.
+
+I think I should write some practice tweets too tbh... like look back at like week 4, write stuff about everyone else you know? 
+
+I think the HVT chart will be big too tbh... could easily break that one down by team too
+```{r}
+#think I want to do this with Red zone proe as well
+#also want to make a chart like this for the season as well with HVT... season, week, receptions/carries inside the 10 
+total_pass_oe <- pbp_2023_all %>%
+  group_by(posteam) %>%
+  summarize(total_pass_oe = mean(pass_oe, na.rm = TRUE)) %>%
+  drop_na(posteam)
+
+total_xpass <- pbp_2023_all %>%
+  group_by(posteam) %>%
+  summarize(total_xpass = mean(xpass, na.rm = TRUE)) %>%
+  drop_na(posteam)
+
+total_pass_oe_week1 <- pbp_2023_all %>%
+  #going to need to change this filter statement throughout the season
+  filter(week == 1) %>%
+  group_by(posteam) %>%
+  summarize(total_pass_oe_week1 = mean(pass_oe, na.rm = TRUE)) %>%
+  drop_na(posteam)
+
+total_xpass_week1 <- pbp_2023_all %>%
+  #change this filter statement throughout the season as well
+  filter(week == 1) %>%
+  group_by(posteam) %>%
+  summarize(total_xpass_week1 = mean(xpass, na.rm = TRUE)) %>%
+  drop_na(posteam)
+
+team_pass_df <- left_join(total_pass_oe, total_xpass, by = "posteam")
+team_pass_week1_df <- left_join(total_pass_oe_week1, total_xpass_week1, by = "posteam")
+team_pass_df <- left_join(team_pass_df, team_pass_week1_df, by = "posteam")
+```
+
+
+```{r}
+total_pass_oe <- pbp_2023_all %>%
+  filter(play_type == "run" | play_type == "pass") %>%
+  group_by(posteam) %>%
+  summarize(total_pass_oe = mean(pass_oe, na.rm = TRUE)) %>%
+  drop_na(posteam)
+
+total_xpass <- pbp_2023_all %>%
+  filter(play_type == "run" | play_type == "pass") %>%
+  group_by(posteam) %>%
+  summarize(total_xpass = mean(xpass, na.rm = TRUE)) %>%
+  drop_na(posteam)
+
+total_pass_oe_week1 <- pbp_2023_all %>%
+  filter(play_type == "run" | play_type == "pass") %>%
+  #going to need to change this filter statement throughout the season
+  filter(week == 1) %>%
+  group_by(posteam) %>%
+  summarize(total_pass_oe_week1 = mean(pass_oe, na.rm = TRUE)) %>%
+  drop_na(posteam)
+
+total_xpass_week1 <- pbp_2023_all %>%
+  filter(play_type == "run" | play_type == "pass") %>%
+  #change this filter statement throughout the season as well
+  filter(week == 1) %>%
+  group_by(posteam) %>%
+  summarize(total_xpass_week1 = mean(xpass, na.rm = TRUE)) %>%
+  drop_na(posteam)
+
+team_pass_df <- left_join(total_pass_oe, total_xpass, by = "posteam")
+team_pass_week1_df <- left_join(total_pass_oe_week1, total_xpass_week1, by = "posteam")
+team_pass_df <- left_join(team_pass_df, team_pass_week1_df, by = "posteam")
+```
+
+```{r}
+team_pass_df %>%
+  ggplot(aes(y = total_pass_oe)) +
+  geom_boxplot() +
+  labs(
+    y = "Team Pass Over Expectation",
+    title = "2023 Team Pass OE Boxplot"
+  ) +
+  theme(
+    axis.title.x = element_blank(),  # Remove x-axis title
+    axis.text.x = element_blank(),   # Remove x-axis text
+    axis.ticks.x = element_blank()   # Remove x-axis ticks
+  )
+```
+
+
+I do want to post/do some research about air yards/air yards share as well, other things like that. just stats that ppl bring up a lot that I don't know as much about. This is gonna be a little harder to do tbh, if I want to have a lot of ordered pairs... also tough to look at like dhop 2014-2015 being an ordered pair, and dhop 2015-2016 being an ordered pair. I'm gonna have to do some research tbh. 
