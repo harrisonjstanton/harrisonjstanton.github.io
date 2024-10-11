@@ -1,0 +1,563 @@
+---
+title: "2024 NFL stats"
+author: "Harrison Stanton"
+date: "2024-09-10"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(rsconnect)
+library(kableExtra)
+library(nflfastR)
+library(nflreadr)
+```
+
+Right now, some of the names and stats aren't lining up on the first tab when guys play for two teams in one season. I think by getting teams from the pbp doc this should fix this.
+
+Important thing to note: for first tab, I want to separate when a guy plays on different teams. for the second tab, I don't: they should be lumped. For the third tab, it should be back to if a guy played on two teams, he has two entries. 
+
+This is super close to being right. I just want to make sure that if they played on two teams, they have two observations. Darrynton Evans, for example.
+
+LAST THING TO CHECK BEFORE I PUBLISH IT USING 2024 DATA: 
+GUYS WHO PLAYED ON BOTH TEAMS SHOW UP FOR TRAP GRAPH AND SHOW UP FOR WEIGHTED OPPS. SCATTERPLOT IS GREAT RN.
+
+9/7
+Everything looked good except for some teams started to have 200% showing on the trap bar graph and I have no idea why. Also, filter gsis_id out of the stats df in the bottom of the page. The Michael Carter/two team issues were fixed though
+
+```{r}
+column_names <- c("Total_touches", "Total_HVT", "TRAP", "total_fantasy_points", "total_fantasy_points_exp", "games", "ppg", "xppg", "HVT_perc", "HVT_per_game", "Touches_per_game", "weighted_opps", "wo_per_g")
+```
+
+
+#All of Trap Percentage Doc
+```{r}
+pbp_2024 <- load_pbp(2024) %>%
+    # filter(!(is.na(receiving_yards) & !(is.na(receiver_player_id)))) %>%
+    filter(is.na(two_point_conv_result)) %>%
+    filter(season_type == "REG")
+#don't wanna get team from here, wanna get it from pbp_2023, then group_by(gsis_id, team, week)
+roster_2024 <- fast_scraper_roster(2024) %>% 
+  select(depth_chart_position, full_name, gsis_id, team, pfr_id) %>% 
+  filter(depth_chart_position == "RB")
+```
+
+```{r}
+#this will work once there are two weeks down...
+week_list <- pbp_2024 %>%
+  select(week) %>%
+  distinct(week) %>%
+  pull(week)
+```
+
+
+```{r}
+pbp_2024 <- pbp_2024 %>%
+  mutate(
+    gsis_id = case_when(
+      is.na(receiver_player_id) & is.na(rusher_player_id) ~ 'NA',
+      is.na(receiver_player_id) ~ rusher_player_id,
+      TRUE ~ receiver_player_id
+    )
+  )
+```
+
+
+```{r}
+ff_2024 <- load_ff_opportunity(seasons = 2024, stat_type = "weekly", model_version = "latest")
+ff_2024 <- ff_2024 %>% 
+  filter(week < 19)
+
+week <- toString(max(ff_2024$week))
+season <- toString(max(ff_2024$season))
+
+
+
+ff_2024 <- ff_2024 %>%
+  group_by(player_id) %>%
+  mutate(occurrences = n())
+
+ff_2024 <- ff_2024 %>%
+  drop_na(player_id) %>%
+  group_by(player_id) %>%
+  mutate(occurrences = n())
+
+
+ff_2024 <- ff_2024 %>% rename(gsis_id = player_id)
+
+ff_2024 <- ff_2024 %>% filter(gsis_id %in% roster_2024$gsis_id)
+
+col_to_sum <- c("total_fantasy_points", "total_fantasy_points_exp")
+```
+
+```{r}
+rb_df <- ff_2024 %>%
+  group_by(gsis_id, week) %>%
+  summarize_at((col_to_sum), sum)
+```
+
+This isn't quite right, but I don't have time to figure it out right now. Just trying to get a team variable to the guys from the pbp dataframe, not from roster_2023, that way if a player plays on two teams his stats will appear for both.
+
+```{r}
+tt_all <- pbp_2024 %>%
+   group_by(gsis_id, week) %>%
+   filter(is.na(two_point_conv_result)) %>%
+   filter((!(is.na(receiving_yards) & !(is.na(receiver_player_id)))) | !is.na(rusher_player_id)) %>%
+   summarize(
+    Total_touches = n(),
+    team = first(posteam)
+    )
+
+hvt_all <- pbp_2024 %>%
+  group_by(gsis_id, week) %>%
+  filter((!(is.na(rusher_player_id)) & yardline_100 <= 10) | (!(is.na(receiver_player_id))) & incomplete_pass == 0 & interception == 0) %>%
+  summarize(
+    High_value_touches = n(),
+    team = first(posteam)
+  )
+```
+
+```{r}
+tt_all <- tt_all %>%
+  filter(!gsis_id == "NA")
+
+hvt_all <- hvt_all %>%
+  filter(!gsis_id == "NA")
+```
+
+
+
+
+Looks good for this part... Michael Carter is an example of a guy who actually logged games on two teams 
+```{r}
+# tt_all <- pbp_2023 %>%
+#   group_by(gsis_id, week) %>%
+#   filter(is.na(two_point_conv_result)) %>%
+#   filter(!(is.na(receiving_yards) & !(is.na(receiver_player_id)))) %>%
+#   summarize(
+#     Total_touches = n(),
+#     team = first(posteam)
+#     )
+# 
+# hvt_all <- pbp_2023 %>%
+#   group_by(gsis_id, week) %>%
+#   filter((!(is.na(rusher_player_id)) & yardline_100 <= 10) | (!(is.na(receiver_player_id))) & incomplete_pass == 0 & interception == 0) %>%
+#   summarize(
+#     High_value_touches = n(),
+#     team = first(posteam)
+#   )
+```
+
+```{r}
+teams <- roster_2024 %>%
+  distinct(team, .keep_all = TRUE) %>%
+  arrange(team) %>%
+  pull(team)
+
+new_entries <- c("RB1", "RB2", "RB3")
+```
+
+
+
+#High value touches section
+```{r}
+hvt_all <- hvt_all %>%
+  group_by(gsis_id, week) %>%
+  mutate(Total_HVT = sum(High_value_touches)) %>%
+  ungroup()
+
+
+
+hvt_all <- hvt_all %>%
+  distinct(gsis_id, week, .keep_all = TRUE)
+
+
+hvt_all <- hvt_all %>%
+  select(gsis_id, week, Total_HVT, team)
+
+#hvt_all <- hvt_all %>% rename(gsis_id = receiver_player_id)
+```
+
+#High value + total touch data frame
+```{r}
+hvt_tt_df <- left_join(roster_2024 %>% select(depth_chart_position, gsis_id, full_name, pfr_id), tt_all, by = "gsis_id")
+```
+
+```{r}
+hvt_tt_df <- left_join(hvt_tt_df, hvt_all %>% select(gsis_id, week, Total_HVT), by = c("gsis_id", "week"))
+```
+
+Might need to drop the NA in name and stuff like that, not in total_hvt especially if they played... that's important
+Maybe add in a column for this if Total_touches is showing up as NA
+Probably drop NA for week is more ideal... that would be if they didn't even appear on special teams 
+```{r}
+hvt_tt_df$Total_HVT <- ifelse(is.na(hvt_tt_df$Total_HVT), 0, hvt_tt_df$Total_HVT)
+hvt_tt_df$Total_touches <- ifelse(is.na(hvt_tt_df$Total_touches), 0, hvt_tt_df$Total_touches)
+```
+
+#Need to check this out in different doc
+```{r}
+#this is comparing guys from roster_2023 to snap_counts to find pfr_ids that didn't automatically show up on roster 2023
+#will have to do a section like this in 2024 iteration as well
+#list of guys to add eventually
+#gonna need to add Jonathon Brooks once he plays, but rn I don't have a pfr_id for him
+#Kimani vidal
+#Dylan laube
+#Blake Watson
+roster_2024 <- roster_2024 %>%
+  mutate(pfr_id =
+         case_when(
+           full_name == "Derrick Gore" ~ "GoreDe00",
+           full_name == "Patrick Taylor" ~ "TaylPa01",
+           full_name == "Tyler Goodson" ~ "GoodTy00",
+           full_name == "Jashaun Corbin" ~ "CorbJa01",
+           full_name == "Deneric Prince" ~ "PrinDe00",
+           full_name == "Chris Brooks" ~ "BrooCh00",
+           full_name == "Xazavian Valladay" ~ "VallXa00",
+           full_name == "Ray Davis" ~ "DaviRa04",
+           full_name == "Trey Benson" ~ "BensTr01",
+           full_name == "Carson Steele" ~ "SteeCa00",
+           full_name == "Will Shipley" ~ "ShipWi00",
+           full_name == "British Brooks" ~ "BrooBr01",
+           full_name == "Sione Vaki" ~ "VakiSi00",
+           full_name == "Blake Corum" ~ "CoruBl00",
+           full_name == "Tyreik McAllister" ~ "McAlTy00",
+           full_name == "Isaac Guerendo" ~ "GuerIs00",
+           full_name == "Braelon Allen" ~ "AlleBr05",
+           full_name == "Bucky Irving" ~ "IrviBu00",
+           full_name == "Isaiah Davis" ~ "DaviIs00",
+           full_name == "Colson Yankoff" ~ "YankCo00",
+           full_name == "Tyrone Tracy Jr." ~"TracTy00",
+           full_name == "Audric Estimé" ~ "EstiAu00",
+           full_name == "Isaiah Davis" ~ "DaviIs00",
+           full_name == "MarShawn Lloyd" ~ "LloyMa00",
+           full_name == "Jaylen Wright" ~ "WrigJa04",
+           full_name == "Tyler Badie" ~ 	"BadiTy00"
+         )
+  )
+```
+
+#Additions on 8/6
+```{r}
+#need to add rush_receiver_id to pbp_2023
+pbp_2024 <- pbp_2024 %>%
+  mutate(
+    gsis_id = case_when(
+      is.na(receiver_player_id) & is.na(rusher_player_id) ~ 'NA',
+      is.na(receiver_player_id) ~ rusher_player_id,
+      TRUE ~ receiver_player_id
+    )
+  )
+
+#think we're good to go here... fixed the NA problems, added 0s instead 
+#gonna need this saved in my app
+
+data_table_for_app <- pbp_2024 %>%
+  group_by(gsis_id, week) %>%
+  summarise(ATT = sum(!is.na(rusher_player_id)),
+            Rush_yards = sum(yards_gained[!is.na(rusher_player_id)], na.rm = TRUE),
+            "Y/A" = if_else(ATT == 0, 0, round(Rush_yards / ATT, 1)),
+            Rush_TD = sum(touchdown[!is.na((rusher_player_id))]),
+            REC = sum((!is.na(receiver_player_id)) & complete_pass == 1),
+            TGT = sum(!is.na(receiver_player_id)),
+            Rec_yards = sum(yards_gained[!is.na(receiver_player_id) & complete_pass == 1]),
+            #kinda funny there was a pick 6 on a mccaffrey target that screwed up this number
+            "Y/R" = if_else(REC == 0, 0, round(Rec_yards / REC, 1)),
+            Rec_TD = sum(touchdown[!is.na(receiver_player_id) & complete_pass == 1]),
+            team = first(posteam))
+```
+
+
+
+
+
+
+
+#Accurate games played
+```{r}
+snap_counts <- load_snap_counts(
+  seasons = most_recent_season(),
+  file_type = getOption("nflreadr.prefer", default = "rds")
+)
+
+snap_counts <- snap_counts %>%
+  filter(position == "RB")
+```
+
+
+
+
+```{r}
+snap_counts <- snap_counts %>%
+  filter(game_type == "REG") %>%
+  group_by(pfr_player_id)
+
+games_df <- snap_counts %>%
+  select(player, pfr_player_id, week)
+
+#now I should be able to count games played pretty easily... just count rows for each player after filtering
+games_df <- games_df %>%
+  distinct(player, week, .keep_all = TRUE)
+```
+
+```{r}
+rb_df <- left_join(rb_df, roster_2024, by = "gsis_id")
+```
+
+```{r}
+games_df <- games_df %>% 
+  rename(pfr_id = pfr_player_id)
+```
+
+```{r}
+#this looks goood... prob wanna double check tho. I spot checked Ty Chandler bc there are supposed to be all the weeks appearing except for 8 and 9 and it lookedd good on this 
+rb_df <- left_join(rb_df, games_df, by = c("pfr_id", "week"))
+```
+
+```{r}
+rb_df <- rb_df %>%
+  distinct(gsis_id, week, .keep_all = TRUE)
+```
+
+
+```{r}
+#need to check this out and make sure the game log is accurate. I think it is, but might need to change this to full_join instead of left_join if it's not 
+#just deleted total_fp and total_xfp from the select statement 
+hvt_tt_df <- left_join(hvt_tt_df, rb_df %>% select(gsis_id, total_fantasy_points, total_fantasy_points_exp, week), by = c("gsis_id", "week"))
+```
+
+
+#Additions as of 8/5
+
+```{r}
+#gonna have to change the names of this once it's 2024 data... just to keep this less confusing
+# roster_2023 <- load_rosters(2023) %>%
+#   filter(depth_chart_position == "RB")
+pbp_2024_rbs <- load_pbp(2024)
+```
+
+
+
+
+#rusher_receiver_id
+```{r}
+#second attempt
+pbp_2024_rbs <- pbp_2024_rbs %>%
+  mutate(
+    gsis_id = case_when(
+      is.na(receiver_player_id) & is.na(rusher_player_id) ~ 'NA',
+      is.na(receiver_player_id) ~ rusher_player_id,
+      TRUE ~ receiver_player_id
+    )
+  )
+
+
+
+
+
+#This is correct as of 8/6. Don't change this.
+pbp_2024_rbs <- pbp_2024_rbs %>%
+  filter(play_type == "run" | play_type == "pass") %>%
+  filter(season_type == "REG") %>%
+  filter(is.na(two_point_conv_result)) %>%
+  filter(gsis_id %in% roster_2024$gsis_id)
+```
+
+```{r}
+result <- pbp_2024_rbs %>%
+  group_by(gsis_id, week) %>%
+  summarize(
+    rz_targets = sum(yardline_100 < 20 & receiver_player_id == gsis_id, na.rm = TRUE),
+    rz_carries = sum(yardline_100 < 20 & rusher_player_id == gsis_id, na.rm = TRUE),
+    nrz_carries = sum(yardline_100 >= 20 & rusher_player_id == gsis_id, na.rm = TRUE),
+    nrz_targets = sum(yardline_100 >= 20 & receiver_player_id == gsis_id, na.rm = TRUE)
+  )
+
+
+
+result <- result %>%
+  mutate(weighted_opps = 1.3*rz_carries + 2.25*rz_targets + 0.48*nrz_carries + 1.43*nrz_targets)
+```
+
+```{r}
+hvt_tt_df <- left_join(hvt_tt_df, result %>% select(gsis_id, weighted_opps, week), by = c("gsis_id", "week"))
+```
+
+```{r}
+#Creating Rank, joining it to the new, expanded hvt df 
+# Original data frame
+# should be good to count games using this bc the week number comes from games df which comes from snap_counts 
+#going to have to change this games filter... don't know what makes sense. > half team games? something like that makes more sense to me tbh, but also if a guy like CMC gets hurt, I still think he needs to be on the list though. 
+result <- hvt_tt_df %>%
+  group_by(gsis_id) %>%
+  summarize(total_fantasy_points = sum(total_fantasy_points),
+            games = n(), 
+            full_name = first(full_name)) %>%
+  mutate(ppg = total_fantasy_points / games) %>%
+  #filter(games >= 8) %>%
+  arrange(desc(ppg))
+
+# Calculate ranks
+rank_bins <- cut(seq(1, nrow(result)),
+                 breaks = c(0, 13, 25, 37, nrow(result)),
+                 labels = c("RB1", "RB2", "RB3", "Other"),
+                 right = FALSE)
+
+# Create a temporary data frame with ranks
+result <- result %>%
+  mutate(Rank = as.character(rank_bins))
+
+
+hvt_tt_df <- left_join(hvt_tt_df, result %>% select(gsis_id, Rank), by = "gsis_id")
+
+
+
+hvt_tt_df <- hvt_tt_df %>%
+  mutate(Rank = ifelse(is.na(Rank), "Other", Rank))
+```
+
+```{r}
+data_table_for_app <- left_join(data_table_for_app, hvt_tt_df %>% select(gsis_id, Rank, full_name, week), by = c("gsis_id", "week")) %>%
+  filter(!is.na(full_name))
+```
+
+
+#stats_df
+```{r}
+stats_df <- data_table_for_app %>%
+  group_by(gsis_id, team) %>%
+  summarize(ATT = sum(ATT),
+            Rush_yards = sum(Rush_yards),
+            Rush_TD = sum(Rush_TD),
+            REC = sum(REC),
+            TGT = sum(TGT),
+            Rec_yards = sum(Rec_yards),
+            Rec_TD = sum(Rec_TD),
+            Rank = first(Rank),
+            #I think this line might be a problem too
+            #need to make guys with two teams two different observations 
+            team = first(team),
+            full_name = first(full_name)) %>%
+  mutate("Y/A" = if_else(ATT == 0, 0, round(Rush_yards / ATT, 1)),
+         "Y/R" = if_else(REC == 0, 0, round(Rec_yards / REC, 1)))
+```
+
+
+#trap df
+```{r}
+trap_df <- hvt_tt_df %>%
+  group_by(gsis_id, team) %>%
+  summarize(
+    total_fantasy_points = sum(total_fantasy_points, na.rm = TRUE),
+    total_fantasy_points_exp = sum(total_fantasy_points_exp, na.rm = TRUE),
+    Total_touches = sum(Total_touches, na.rm = TRUE),
+    Total_HVT = sum(Total_HVT, na.rm = TRUE),
+    weighted_opps = sum(weighted_opps, na.rm = TRUE),
+    games = n(),
+    #gonna have to change this line... if there are two teams a dude plays on, he needs to appear on both... aka
+    #create another observation. I have to look into this... this is the last thing I need to change though
+    team = first(team),
+    full_name = first(full_name),
+    Rank = first(Rank)
+  ) %>%
+  mutate(
+    TRAP = (Total_touches - Total_HVT) / Total_touches,
+    HVT_perc = 1 - TRAP,
+    ppg = total_fantasy_points / games,
+    xppg = total_fantasy_points_exp / games,
+    "WO/G" = weighted_opps / games,
+    diff = ppg - `WO/G`
+  ) %>%
+  pivot_longer(
+    cols = c(TRAP, HVT_perc),
+    names_to = "Touch_type",
+    values_to = "percentage"
+  ) %>%
+  #what i just changed
+  group_by(gsis_id, team) %>%
+  mutate(label_y = cumsum(percentage) - percentage / 2,
+         label = if_else(Touch_type == "TRAP", Total_touches - Total_HVT, Total_HVT))
+```
+
+
+#scatterplot df
+```{r}
+scatterplot_df <- hvt_tt_df %>%
+  #filter(week >= input$lower & week <= input$higher) %>%
+  group_by(gsis_id) %>%
+  summarize(
+    total_fantasy_points = sum(total_fantasy_points, na.rm = TRUE),
+    total_fantasy_points_exp = sum(total_fantasy_points_exp, na.rm = TRUE),
+    Total_touches = sum(Total_touches, na.rm = TRUE),
+    Total_HVT = sum(Total_HVT, na.rm = TRUE),
+    weighted_opps = sum(weighted_opps, na.rm = TRUE),
+    games = n(),
+    team = first(team),
+    full_name = first(full_name), 
+    Rank = first(Rank)
+  ) %>%
+  mutate(
+    TRAP = (Total_touches - Total_HVT) / Total_touches,
+    HVT_perc = 1 - TRAP,
+    ppg = total_fantasy_points / games,
+    xppg = total_fantasy_points_exp / games,
+    "WO/G" = weighted_opps / games,
+    diff = ppg - `WO/G`,
+    Touches_per_game = Total_touches / games,
+    HVT_per_game = Total_HVT / games
+  )
+```
+
+
+#changing hvt_tt_df structure
+```{r}
+hvt_tt_df <- hvt_tt_df %>%
+  mutate(week = as.integer(week))
+
+#adding the last bit for stats_df
+stats_df <- left_join(stats_df, scatterplot_df %>% select(gsis_id, total_fantasy_points, total_fantasy_points_exp, Total_touches, Total_HVT, weighted_opps, games, TRAP, ppg, xppg, "WO/G", diff, Touches_per_game, HVT_per_game), by = "gsis_id")
+```
+
+```{r}
+trap_df <- trap_df %>%
+  ungroup()
+
+stats_df <- stats_df %>%
+  ungroup()
+```
+
+
+List of objects I need:
+week_list
+scatterplot_df
+trap_df
+stats_df 
+hvt_tt_df
+column_names
+week
+season
+
+```{r}
+trap_df <- trap_df %>%
+  mutate(
+    label_y = if_else(percentage == 1, .5, label_y),
+    label_y = if_else(percentage == 0, NA_integer_, label_y)
+  )
+```
+
+#pre week 2
+```{r}
+# save(scatterplot_df, trap_df, stats_df, hvt_tt_df, column_names, week, season, teams,
+#      file = "2024NFL.RData")
+```
+
+
+#post week 2
+```{r}
+save(week_list, scatterplot_df, trap_df, stats_df, hvt_tt_df, column_names, week, season, teams,
+     file = "2024NFL.RData")
+```
+
+
+
