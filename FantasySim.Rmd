@@ -1,0 +1,430 @@
+---
+title: "Best Ball Win prob/projection"
+author: "Harrison Stanton"
+date: "2025-01-07"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(rsconnect)
+library(kableExtra)
+library(nflfastR)
+library(nflreadr)
+```
+
+total_fantasy_points
+```{r, message=FALSE}
+ff <- load_ff_opportunity(seasons=most_recent_season())
+```
+
+receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rush_touchdown, rec_touchdown, pass_two_point_conv, rush_two_point_conv, rec_two_point_conv, pass_interception, rec_fumbles_lost, rush_fumbles_lost, (just fumble recovery td, ok if i miss that though)
+
+I think these are what I would probably want for my database as well
+going to need to do some manual research or look through different dfs that are in nflreadR and find a way to get rookies easily too
+```{r}
+ff <- ff %>%
+  select(season, week, posteam, game_id, player_id, full_name, receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rush_touchdown, rec_touchdown, pass_two_point_conv, rush_two_point_conv, rec_two_point_conv, pass_interception, rec_fumble_lost, rush_fumble_lost, total_fantasy_points)
+```
+
+What is the goal of what I'm doing right now?
+I want to use monte carlo sims to build the best team for our playoff contest (or at least use the sim to test which of my teams are the best. I think that's better than just RNGing a bunch of teams). This isn't going to be 100% accurate. It's hard to determine the exact probability that someone scores between 5-8 fp. Also, with that, it's hard to determine where in that interval it should be, especially on the edges (0-3 interval or 30+ interval is going to be tough. Should be more skewed towards middle, but I'll prob just have to put a hard cap on >0 and <30)
+
+I am going to need to calculate half PPR ppg though. I think the dataset that is in this package is only full ppr which is kinda tragic. I remember calculating this ish was lowkey tragic. 
+
+Stats that go into ppg (last time I tried to do this, lateral stats got weird)
+I think this is all of them. Just need to calculate my own ppg bc of half ppr 
+1. Rush yards
+2. Rec yards
+3. Rush TD
+4. Rec TD
+5. Pass yards
+6. Pass TD
+7. Fumbles lost
+8. Int
+9. 2 point conversions (rec, rush, pass)
+10. fumble recovery TDs (Trey McBride lol)
+
+
+
+
+Should probably double check this, but all James Cook's stuff was right. The only thing that comes to mind that will be wrong for sure is Trey McBride with the fumble recovery TD. He's out of this group, but if someone else had that, their scores will be slightly off as well. I'm ok with that though as idk if that happened to anyone else this year. 
+
+Don't even need the half_ppg anymore since I'm ditching the playoff thing, but I'm gonna keep it commented out here because it's nice to have that written up already
+```{r}
+ff <- ff %>%
+  filter(week <= 18) #%>%
+  # mutate(
+  #   half_ppg = 0.5 * receptions + .04 * pass_yards_gained + .1 * (rec_yards_gained + rush_yards_gained) + 4 * pass_touchdown + 6 * (rush_touchdown + rec_touchdown) + 2 * (pass_two_point_conv + rush_two_point_conv + rec_two_point_conv) + -2 * (pass_interception + rec_fumble_lost + rush_fumble_lost) 
+  # )
+```
+
+
+#practice with James Cook
+```{r}
+james_cook <- ff %>%
+  filter(player_id == "00-0037248")
+```
+
+receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rush_touchdown, rec_touchdown, pass_two_point_conv, rush_two_point_conv, rec_two_point_conv, pass_interception, rec_fumble_lost, rush_fumble_lost,
+
+#calculating half-ppr
+```{r}
+james_cook <- james_cook %>%
+  mutate(
+    half_ppg = 0.5 * receptions + .04 * pass_yards_gained + .1 * (rec_yards_gained + rush_yards_gained) + 4 * pass_touchdown + 6 * (rush_touchdown + rec_touchdown) + 2 * (pass_two_point_conv + rush_two_point_conv + rec_two_point_conv) + -2 * (pass_interception + rec_fumble_lost + rush_fumble_lost) 
+  ) %>%
+  arrange(half_ppg)
+```
+
+
+This step is probably useless tbh. This was before i knew about quantile command
+```{r}
+james_cook <- james_cook %>%
+  mutate(
+    p_sub = seq_len(nrow(james_cook))
+  )
+```
+
+
+#quantiles
+```{r}
+Cook_quantile <- james_cook$half_ppg %>%
+  quantile(probs = seq(0,1,.25))
+#quantile(probs = seq(0,1, 1/sqrt(nrow())))
+#something like this... just to get the right number of quantiles for my datasets. 
+```
+something like this... just to get the right number of quantiles for my datasets. 
+If i'm going to do this, going to need to generalize the if else stuff 2 code chunks down with rng
+what i could do is just head(20) or something like that too
+
+#modeled points
+Now I need to figure out how to do this a bunch of times for one player. Shouldn't be too crazy, just adding a for loop at the start of this. What might get tricky is what object to store it as. I think probably an array but I don't know how those work in R to be honest.
+
+
+```{r}
+#all the randomized scores for a player
+scores <- c()
+```
+
+One problem that I might run into when trying to loop this for everybody is resetting the scores vector. For instance, once I switch player IDs, all the scores from the guy before that is going to stay in the vector if I don't clear it.
+```{r}
+#going to have one more for loop out here to cycle through player ids
+for(i in 1:5000){
+  rng <- runif(1, min = 0, max = 1)
+  if(rng < .25){
+    lower <- unname(Cook_quantile[1])
+    upper <- unname(Cook_quantile[2])
+    lower_percent <- 0
+    higher_percent <- .25
+  } else if(rng >= .25 & rng < .5){
+    lower <- unname(Cook_quantile[2])
+    upper<- unname(Cook_quantile[3])
+      lower_percent <- .25
+    higher_percent <- .5
+  } else if(rng >=.5 & rng < .75){
+    lower <- unname(Cook_quantile[3])
+    upper<- unname(Cook_quantile[4])
+    lower_percent <- .5
+    higher_percent <- .75
+  } else{
+    lower <- unname(Cook_quantile[4])
+    upper <- unname(Cook_quantile[5])
+    lower_percent <- .75
+    higher_percent <- 1
+  }
+  modeled_points <- lower + (rng - lower_percent) * (upper - lower)/(higher_percent-lower_percent)
+  scores <- c(scores, modeled_points)
+  #probably going to want to include something like this:
+  #going to need to be careful with that index too... not going to be i in this case I don't think.
+  #player_ids_vector <- ids[[x]]
+  #colnames(all_player_scores) <- player_ids_vector
+  all_player_scores <- data.frame(scores)
+}
+#in the last for loop, that's where I'm going to reset scores vector. Need to add it to the df first though
+```
+
+#practice with two people intead of 1
+```{r}
+#all the randomized scores for a player
+individual_scores <- c()
+all_player_scores <- data.frame()
+```
+
+
+
+```{r}
+for(i in 1:5000){
+  rng <- runif(1, min = 0, max = 1)
+  if(rng < .25){
+    lower <- unname(player_quantile[1])
+    upper <- unname(player_quantile[2])
+    lower_percent <- 0
+    higher_percent <- .25
+  } else if(rng >= .25 & rng < .5){
+    lower <- unname(player_quantile[2])
+    upper<- unname(player_quantile[3])
+      lower_percent <- .25
+    higher_percent <- .5
+  } else if(rng >=.5 & rng < .75){
+    lower <- unname(player_quantile[3])
+    upper<- unname(player_quantile[4])
+    lower_percent <- .5
+    higher_percent <- .75
+  } else{
+    lower <- unname(player_quantile[4])
+    upper <- unname(player_quantile[5])
+    lower_percent <- .75
+    higher_percent <- 1
+  }
+  modeled_points <- lower + (rng - lower_percent) * (upper - lower)/(higher_percent-lower_percent)
+  scores <- c(scores, modeled_points)
+  #probably going to want to include something like this:
+  #going to need to be careful with that index too... not going to be i in this case I don't think.
+  #player_ids_vector <- ids[[x]]
+  #colnames(all_player_scores) <- player_ids_vector
+  all_player_scores <- data.frame(scores)
+}
+#in the last for loop, that's where I'm going to reset scores vector. Need to add it to the df first though
+```
+
+
+#practice with Buffalo as a team
+I need to be able to generalize the quantile step so I can just loop through this a bunch to calculate everyone's quantiles. Going to practice with just the Bills first since I have something to compare it too with James Cook
+```{r}
+bills <- ff %>%
+  filter(posteam == "BUF") %>%
+  filter(!is.na(player_id)) %>%
+  select(player_id, total_fantasy_points)
+```
+
+
+
+How do I generalize this? 
+My first thought is to store all the IDs in a vector. Then, do ff$half_ppg %>% filter(player_id == vector(i)) and have i just increment all the way down and save it like this, but idk if that's the best way to do it or not. Then I could just run the rng thing a bunch
+```{r}
+ids <- unique(bills$player_id)
+```
+
+Made this to compare different models, see if linear interpolation works best or square root of everything.
+```{r}
+bills_averages <- bills %>%
+  group_by(player_id) %>%
+  summarize(
+    ppg = mean(total_fantasy_points)
+  )
+```
+
+```{r}
+bills_averages <- bills_averages[match(ids, bills_averages$player_id), ]
+```
+
+This should correctly generate every player's quantile in the dataset. 
+Now I just need to mesh the code I have above that gives me one score one time into this. 
+```{r}
+for(i in 1:length(ids)){
+  player <- bills %>%
+    filter(player_id == ids[[i]])
+  
+  player_quantile <- player$total_fantasy_points %>%
+    #might need to generalize this b, specifically how many groups, too
+    quantile(probs = seq(0,1,.25))
+  
+   #print(player_quantile)
+  }
+```
+
+#Attempt to combine my quantile and random score generation 2 players
+Left both parts on their own above this
+Think I should try doing this with two people before I do it with a million. Think I might create 5k data frames if I'm not careful
+
+```{r}
+rm(i, lower, individual_scores, upper, lower_percent, modeled_points, rng, player_quantile, higher_percent, all_player_scores)
+```
+
+
+#Linear Sim
+```{r}
+#stores column names with player's ids
+player_ids_vector <- c()
+for(i in 1:18){
+  #vector containing generated scores for one individual
+  individual_scores <- c()
+  #df with only the one player's stats
+  player <- bills %>%
+    filter(player_id == ids[[i]])
+  
+  #quantile for said one player
+  player_quantile <- player$total_fantasy_points %>%
+    #might need to generalize this b, specifically how many groups, too
+    quantile(probs = seq(0,1,.25))
+  
+      for(j in 1:8500){
+        rng <- runif(1, min = 0, max = 1)
+        if(rng < .25){
+          lower <- unname(player_quantile[1])
+          upper <- unname(player_quantile[2])
+          lower_percent <- 0
+          higher_percent <- .25
+        } else if(rng >= .25 & rng < .5){
+          lower <- unname(player_quantile[2])
+          upper<- unname(player_quantile[3])
+            lower_percent <- .25
+          higher_percent <- .5
+        } else if(rng >=.5 & rng < .75){
+          lower <- unname(player_quantile[3])
+          upper<- unname(player_quantile[4])
+          lower_percent <- .5
+          higher_percent <- .75
+        } else{
+          lower <- unname(player_quantile[4])
+          upper <- unname(player_quantile[5])
+          lower_percent <- .75
+          higher_percent <- 1
+        }
+        #self explanatory, but using the quantile and interpolation to take the rng and make it a fantasy score
+        modeled_points <- lower + (rng - lower_percent) * (upper - lower)/(higher_percent-lower_percent)
+        individual_scores <- c(individual_scores, modeled_points)
+      }
+     if(i == 1){
+         #I think chat gpt might have just given me a wrong suggestion here too.
+         all_player_scores <- data.frame(individual_scores)
+     } else{
+         all_player_scores <- cbind(all_player_scores, individual_scores)
+     }
+      player_ids_vector <- c(player_ids_vector, ids[[i]])
+}
+```
+
+```{r}
+colnames(all_player_scores) <- player_ids_vector
+```
+
+#Log Sim
+Every variable will have a 2, that means it's the log version, not the normal
+Messed up somewhere in here
+```{r}
+#stores column names with player's ids
+player_ids_vector_2 <- c()
+for(i in 1:18){
+  #vector containing generated scores for one individual
+  individual_scores_2 <- c()
+  #df with only the one player's stats
+  player_2 <- bills %>%
+    filter(player_id == ids[[i]])
+  
+  #quantile for said one player
+  #Need to transform at this step
+  player_2$log_fp <- log1p(player_2$total_fantasy_points)
+  player_quantile_2 <- player_2$log_fp %>%
+    #might need to generalize this b, specifically how many groups, too
+    quantile(probs = seq(0,1,.25))
+  
+      for(j in 1:8500){
+        rng_2 <- runif(1, min = 0, max = 1)
+        if(rng_2 < .25){
+          lower_2 <- unname(player_quantile_2[1])
+          upper_2 <- unname(player_quantile_2[2])
+          lower_percent_2 <- 0
+          higher_percent <- .25
+        } else if(rng_2 >= .25 & rng_2 < .5){
+          lower_2 <- unname(player_quantile_2[2])
+          upper_2 <- unname(player_quantile_2[3])
+          lower_percent_2 <- .25
+          higher_percent_2 <- .5
+        } else if(rng_2 >=.5 & rng_2 < .75){
+          lower_2 <- unname(player_quantile_2[3])
+          upper_2 <- unname(player_quantile_2[4])
+          lower_percent_2 <- .5
+          higher_percent_2 <- .75
+        } else{
+          lower_2 <- unname(player_quantile_2[4])
+          upper_2 <- unname(player_quantile_2[5])
+          lower_percent_2 <- .75
+          higher_percent_2 <- 1
+        }
+        #self explanatory, but using the quantile and interpolation to take the rng, make it the correct value
+        interpolated_log <- lower_2 + (rng_2 - lower_percent_2) * (upper_2 - lower_2)/(higher_percent_2-lower_percent_2)
+        #transforming back to fantasy points
+        modeled_points_2 <- expm1(interpolated_log)
+        individual_scores_2 <- c(individual_scores_2, modeled_points_2)
+        
+        
+      }
+     if(i == 1){
+         all_player_scores_2 <- data.frame(individual_scores_2)
+     } else{
+         all_player_scores_2 <- cbind(all_player_scores_2, individual_scores_2)
+     }
+      player_ids_vector_2 <- c(player_ids_vector_2, ids[[i]])
+}
+```
+
+```{r}
+colnames(all_player_scores_2) <- player_ids_vector_2
+```
+
+
+```{r}
+linear_averages <- c()
+for(i in 1:18){
+  individual_avg <- all_player_scores %>%
+    pull(ids[[i]]) %>%
+    mean()
+  linear_averages <- c(linear_averages, individual_avg)
+}
+
+print(linear_averages)
+```
+
+```{r}
+bills_averages$linear_averages <- linear_averages
+```
+
+```{r}
+transformed_averages <- c()
+for(i in 1:18){
+  individual_avg_2 <- all_player_scores_2 %>%
+    pull(ids[[i]]) %>%
+    mean()
+  transformed_averages <- c(transformed_averages, individual_avg_2)
+}
+
+print(transformed_averages)
+```
+
+```{r}
+bills_averages$linear_averages <- linear_averages
+```
+
+```{r}
+bills_averages$transformed_averages <- transformed_averages
+```
+
+
+I honestly think that the transformed averages might perform worse. Kind of weird. Maybe my data just isn't as spread out as I thought. That would make the linear one look better fs. 
+
+
+Next steps for my project:
+0. I think I'm gonna need to fix way outlier numbers. Or even just the upper quadrant for guys. Like Josh Allen's projected ppg is just too high. I think it's just going to be tough for ppl with mega outlier scores, but idk how to solve for this. First thought is fitting it to a x^2 function instead of just a line, but idk how to do that off the top of my head. 
+  The Josh Allen projection isn't as bad as I thought. This data is factoring out Week 18 where he took one snap to keep
+  the snaps streak, so his ppg is pretty close to the projection. I'm going to test the log based way too to see if 
+  that's better, otherwise I'm fine with the linear interpolation. 
+1. make this work for 25 person chunks of ff (going to run into problems when I want to generate two teams... think I'm
+just going to make another function and then put all the variable names as 2 lol)
+2. figure out how to make this work so that if a user passes the name of a player, I can pull their ids into the "ids" vector that currently contains all bills players
+3. Big thing is going to be figuring out how to optimize the scoring to match best ball scoring. The biggest problem I foresee is needing to have each player's positions and everything like that saved too.
+  a. One thought I had earlier about this was going through and optimizing each lineup one at a time, saving the total scores to a team1 and team2 vector, and then at the end making that win prob and projected points (I think the win prob and projected points will be the easiest part of the project tbh)
+4. making the database for rookies
+5. making this a shiny app so me and leaguemates can interact with it
+
+Biggest problems i foresee with my projection:
+1. handcuff players 
+  what happens when KW3 goes down and my charb projection stays the same? obviously that's not right
+2. rookies
+  what happens when 3 games into the season, it's obvious that BTJ and Ladd are better than their quadrant but I'm still
+  grouping by their draft capital? Is there some way I can weight recent production more than the past, especially for 
+  young guys? 
+
+

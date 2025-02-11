@@ -1,0 +1,170 @@
+---
+title: "Player databases"
+author: "Harrison Stanton"
+date: "2025-02-11"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(rsconnect)
+library(kableExtra)
+library(nflfastR)
+library(nflreadr)
+```
+Notes:
+Going to need to merge draft capital onto this as well. Otherwise, looking to be pretty much all I wanted it to be right now. Pretty cool that I'm gonna own a database lol... Now i can really be a nerd. Would be so nice if I could just click a button and run all this though instead of doing it like this.
+
+Probably want to add an "is.rookie" column to the all player's database... think that'll be helpful when I'm doing this ish for building out the rookies projections. 
+```{r}
+rookies <- load_draft_picks() %>%
+  filter(position %in% c("QB", "WR", "TE", "RB")) %>%
+  filter(season >= 2018) %>%
+  select(season, round, pick, team, gsis_id, pfr_player_name, position)
+```
+
+```{r}
+rookies <- rookies %>%
+  mutate(
+    player_season_id = paste(season, gsis_id, sep = " ")
+  )
+```
+
+```{r}
+ff_2022 <- load_ff_opportunity(seasons = 2022)
+```
+
+```{r}
+ff_2022 <- ff_2022 %>%
+  mutate(
+    player_season_id = paste(season, player_id, sep = " ")
+           )
+```
+
+```{r}
+ff_2022 <- ff_2022 %>%
+  filter(player_season_id %in% rookies$player_season_id)
+```
+
+```{r}
+ff_2022 <- ff_2022 %>%
+  select(season, week, posteam, game_id, player_id, player_season_id, full_name, receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rush_touchdown, rec_touchdown, pass_two_point_conv, rush_two_point_conv, rec_two_point_conv, pass_interception, rec_fumble_lost, rush_fumble_lost, total_fantasy_points)
+```
+
+This is pretty much exactly what I want. Just going to do this now basically from 2018 till now. Don't know why I picked 2018, pretty arbitrary tbh. 
+```{r}
+ff_2022 <- ff_2022 %>%
+  mutate(
+    half_ppg = 0.5 * receptions + .04 * pass_yards_gained + .1 * (rec_yards_gained + rush_yards_gained) + 4 * pass_touchdown + 6 * (rush_touchdown + rec_touchdown) + 2 * (pass_two_point_conv + rush_two_point_conv + rec_two_point_conv) + -2 * (pass_interception + rec_fumble_lost + rush_fumble_lost)
+  )
+```
+
+```{r}
+ff_2022 <- ff_2022 %>%
+  filter(!is.na(player_id))
+```
+
+
+#restarting with all years 
+```{r}
+ff_2018_2019 <- load_ff_opportunity(seasons = 2018:2019) %>%
+    mutate(
+    player_season_id = paste(season, player_id, sep = " ")
+           )
+```
+
+
+```{r}
+ff_2018_2019 <- ff_2018_2019 %>%
+  filter(player_season_id %in% rookies$player_season_id) %>%
+  filter(!is.na(player_id))
+```
+
+```{r}
+ff_2018_2019 <- ff_2018_2019 %>%
+  select(season, week, posteam, game_id, player_id, player_season_id, full_name, receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rush_touchdown, rec_touchdown, pass_two_point_conv, rush_two_point_conv, rec_two_point_conv, pass_interception, rec_fumble_lost, rush_fumble_lost, total_fantasy_points)
+```
+
+This is pretty much exactly what I want. Just going to do this now basically from 2018 till now. Don't know why I picked 2018, pretty arbitrary tbh. 
+```{r}
+ff_2018_2019 <- ff_2018_2019 %>%
+  mutate(
+    half_ppg = 0.5 * receptions + .04 * pass_yards_gained + .1 * (rec_yards_gained + rush_yards_gained) + 4 * pass_touchdown + 6 * (rush_touchdown + rec_touchdown) + 2 * (pass_two_point_conv + rush_two_point_conv + rec_two_point_conv) + -2 * (pass_interception + rec_fumble_lost + rush_fumble_lost)
+  )
+```
+
+#2020 and 2021
+```{r}
+ff_20_21<- load_ff_opportunity(seasons = 2020:2021) %>%
+    mutate(
+    player_season_id = paste(season, player_id, sep = " ")
+           )
+```
+
+
+```{r}
+ff_20_21 <- ff_20_21 %>%
+  filter(player_season_id %in% rookies$player_season_id) %>%
+  filter(!is.na(player_id))
+```
+
+```{r}
+ff_20_21 <- ff_20_21 %>%
+  select(season, week, posteam, game_id, player_id, player_season_id, full_name, receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rush_touchdown, rec_touchdown, pass_two_point_conv, rush_two_point_conv, rec_two_point_conv, pass_interception, rec_fumble_lost, rush_fumble_lost, total_fantasy_points)
+```
+
+This is pretty much exactly what I want. Just going to do this now basically from 2018 till now. Don't know why I picked 2018, pretty arbitrary tbh. 
+```{r}
+ff_20_21 <- ff_20_21 %>%
+  mutate(
+    half_ppg = 0.5 * receptions + .04 * pass_yards_gained + .1 * (rec_yards_gained + rush_yards_gained) + 4 * pass_touchdown + 6 * (rush_touchdown + rec_touchdown) + 2 * (pass_two_point_conv + rush_two_point_conv + rec_two_point_conv) + -2 * (pass_interception + rec_fumble_lost + rush_fumble_lost)
+  )
+```
+
+
+#23-24
+```{r}
+ff_23_24 <- load_ff_opportunity(seasons = 2023:2024) %>%
+    mutate(
+    player_season_id = paste(season, player_id, sep = " ")
+           )
+```
+
+
+```{r}
+ff_23_24 <- ff_23_24 %>%
+  filter(player_season_id %in% rookies$player_season_id) %>%
+  filter(!is.na(player_id))
+```
+
+```{r}
+ff_23_24 <- ff_23_24 %>%
+  select(season, week, posteam, game_id, player_id, player_season_id, full_name, receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rush_touchdown, rec_touchdown, pass_two_point_conv, rush_two_point_conv, rec_two_point_conv, pass_interception, rec_fumble_lost, rush_fumble_lost, total_fantasy_points)
+```
+
+This is pretty much exactly what I want. Just going to do this now basically from 2018 till now. Don't know why I picked 2018, pretty arbitrary tbh. 
+```{r}
+ff_23_24 <- ff_23_24 %>%
+  mutate(
+    half_ppg = 0.5 * receptions + .04 * pass_yards_gained + .1 * (rec_yards_gained + rush_yards_gained) + 4 * pass_touchdown + 6 * (rush_touchdown + rec_touchdown) + 2 * (pass_two_point_conv + rush_two_point_conv + rec_two_point_conv) + -2 * (pass_interception + rec_fumble_lost + rush_fumble_lost)
+  )
+```
+
+Just need to add draft capital to this. Going to be annoying going through and having to update this every week... really wish I could just click run all like a normal freaking person.
+
+Probably should push this to git hub at some point too. 
+```{r}
+rookie_database <- rbind(ff_2018_2019, ff_20_21, ff_2022, ff_23_24)
+```
+
+```{r}
+rookie_database <- rookie_database %>%
+  rename(gsis_id = player_id)
+```
+
+
+```{r}
+rookie_database <- inner_join(rookie_database, rookies %>% select(gsis_id, round, pick), by = "gsis_id")
+```
+
