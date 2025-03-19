@@ -5,6 +5,11 @@ date: "2025-01-07"
 output: html_document
 ---
 
+
+To do list (3/18)
+1. Might need to rethink how the optimize and generate functions are done. What if I passed two teams into the generate one? and then the add function was something like add_player(score, position, team) ? I think that might be the best way to do it so I only have to run the optimize and generate functions once 
+2. Figure out why I can't use summarize on long_scores_df
+  couple of ideas: 1. i didn't ungroup temp 2. test if i can use group_by(player_id) on the normal df 3. retest essentially
 ```{r, message=FALSE}
 library(tidyverse)
 library(dplyr)
@@ -12,148 +17,127 @@ library(rsconnect)
 library(kableExtra)
 library(nflfastR)
 library(nflreadr)
+library(stats)
+library(Hmisc)
 ```
 
-total_fantasy_points
 ```{r, message=FALSE}
-ff <- load_ff_opportunity(seasons=most_recent_season())
+load("All_Players_Database.RData")
+load("RookieDatabase.RData")
 ```
 
-receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rush_touchdown, rec_touchdown, pass_two_point_conv, rush_two_point_conv, rec_two_point_conv, pass_interception, rec_fumbles_lost, rush_fumbles_lost, (just fumble recovery td, ok if i miss that though)
-
-I think these are what I would probably want for my database as well
-going to need to do some manual research or look through different dfs that are in nflreadR and find a way to get rookies easily too
 ```{r}
-ff <- ff %>%
-  select(season, week, posteam, game_id, player_id, full_name, receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rush_touchdown, rec_touchdown, pass_two_point_conv, rush_two_point_conv, rec_two_point_conv, pass_interception, rec_fumble_lost, rush_fumble_lost, total_fantasy_points)
+ff2 <- load_ff_opportunity(2024)
 ```
 
-What is the goal of what I'm doing right now?
-I want to use monte carlo sims to build the best team for our playoff contest (or at least use the sim to test which of my teams are the best. I think that's better than just RNGing a bunch of teams). This isn't going to be 100% accurate. It's hard to determine the exact probability that someone scores between 5-8 fp. Also, with that, it's hard to determine where in that interval it should be, especially on the edges (0-3 interval or 30+ interval is going to be tough. Should be more skewed towards middle, but I'll prob just have to put a hard cap on >0 and <30)
-
-I am going to need to calculate half PPR ppg though. I think the dataset that is in this package is only full ppr which is kinda tragic. I remember calculating this ish was lowkey tragic. 
-
-Stats that go into ppg (last time I tried to do this, lateral stats got weird)
-I think this is all of them. Just need to calculate my own ppg bc of half ppr 
-1. Rush yards
-2. Rec yards
-3. Rush TD
-4. Rec TD
-5. Pass yards
-6. Pass TD
-7. Fumbles lost
-8. Int
-9. 2 point conversions (rec, rush, pass)
-10. fumble recovery TDs (Trey McBride lol)
-
-
-
-
-Should probably double check this, but all James Cook's stuff was right. The only thing that comes to mind that will be wrong for sure is Trey McBride with the fumble recovery TD. He's out of this group, but if someone else had that, their scores will be slightly off as well. I'm ok with that though as idk if that happened to anyone else this year. 
-
-Don't even need the half_ppg anymore since I'm ditching the playoff thing, but I'm gonna keep it commented out here because it's nice to have that written up already
 ```{r}
-ff <- ff %>%
-  filter(week <= 18) #%>%
-  # mutate(
-  #   half_ppg = 0.5 * receptions + .04 * pass_yards_gained + .1 * (rec_yards_gained + rush_yards_gained) + 4 * pass_touchdown + 6 * (rush_touchdown + rec_touchdown) + 2 * (pass_two_point_conv + rush_two_point_conv + rec_two_point_conv) + -2 * (pass_interception + rec_fumble_lost + rush_fumble_lost) 
-  # )
+ff2 %>% 
+  summarize(points = mean(total_fantasy_points), .by = player_id)
 ```
 
 
-#practice with James Cook
+#adding bucket to/pick to ff
 ```{r}
-james_cook <- ff %>%
-  filter(player_id == "00-0037248")
-```
-
-receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rush_touchdown, rec_touchdown, pass_two_point_conv, rush_two_point_conv, rec_two_point_conv, pass_interception, rec_fumble_lost, rush_fumble_lost,
-
-#calculating half-ppr
-```{r}
-james_cook <- james_cook %>%
+Rookie_database <- Rookie_database %>% 
   mutate(
-    half_ppg = 0.5 * receptions + .04 * pass_yards_gained + .1 * (rec_yards_gained + rush_yards_gained) + 4 * pass_touchdown + 6 * (rush_touchdown + rec_touchdown) + 2 * (pass_two_point_conv + rush_two_point_conv + rec_two_point_conv) + -2 * (pass_interception + rec_fumble_lost + rush_fumble_lost) 
-  ) %>%
-  arrange(half_ppg)
-```
-
-
-This step is probably useless tbh. This was before i knew about quantile command
-```{r}
-james_cook <- james_cook %>%
-  mutate(
-    p_sub = seq_len(nrow(james_cook))
+    bucket = 
+      case_when(
+        pick < 11 ~ 1,
+        pick < 22 & pick >= 11 ~ 2,
+        pick < 33 & pick >= 22 ~ 3,
+        round == 2 ~ 4,
+        round == 3 ~ 5,
+        round == 4 ~ 6,
+        round == 5 ~ 7,
+        round == 6 | round == 7 ~ 8
+      )
   )
 ```
 
-
-#quantiles
+#data cleaning
 ```{r}
-Cook_quantile <- james_cook$half_ppg %>%
-  quantile(probs = seq(0,1,.25))
-#quantile(probs = seq(0,1, 1/sqrt(nrow())))
-#something like this... just to get the right number of quantiles for my datasets. 
-```
-something like this... just to get the right number of quantiles for my datasets. 
-If i'm going to do this, going to need to generalize the if else stuff 2 code chunks down with rng
-what i could do is just head(20) or something like that too
-
-#modeled points
-Now I need to figure out how to do this a bunch of times for one player. Shouldn't be too crazy, just adding a for loop at the start of this. What might get tricky is what object to store it as. I think probably an array but I don't know how those work in R to be honest.
-
-
-```{r}
-#all the randomized scores for a player
-scores <- c()
+ff <- All_Players_Database %>% 
+  filter(season == "2023" | season == "2022" | season == "2024") %>%
+  group_by(player_id) %>%
+  slice_head(n=20) %>%
+  ungroup()
 ```
 
-One problem that I might run into when trying to loop this for everybody is resetting the scores vector. For instance, once I switch player IDs, all the scores from the guy before that is going to stay in the vector if I don't clear it.
 ```{r}
-#going to have one more for loop out here to cycle through player ids
-for(i in 1:5000){
-  rng <- runif(1, min = 0, max = 1)
-  if(rng < .25){
-    lower <- unname(Cook_quantile[1])
-    upper <- unname(Cook_quantile[2])
-    lower_percent <- 0
-    higher_percent <- .25
-  } else if(rng >= .25 & rng < .5){
-    lower <- unname(Cook_quantile[2])
-    upper<- unname(Cook_quantile[3])
-      lower_percent <- .25
-    higher_percent <- .5
-  } else if(rng >=.5 & rng < .75){
-    lower <- unname(Cook_quantile[3])
-    upper<- unname(Cook_quantile[4])
-    lower_percent <- .5
-    higher_percent <- .75
-  } else{
-    lower <- unname(Cook_quantile[4])
-    upper <- unname(Cook_quantile[5])
-    lower_percent <- .75
-    higher_percent <- 1
-  }
-  modeled_points <- lower + (rng - lower_percent) * (upper - lower)/(higher_percent-lower_percent)
-  scores <- c(scores, modeled_points)
-  #probably going to want to include something like this:
-  #going to need to be careful with that index too... not going to be i in this case I don't think.
-  #player_ids_vector <- ids[[x]]
-  #colnames(all_player_scores) <- player_ids_vector
-  all_player_scores <- data.frame(scores)
-}
-#in the last for loop, that's where I'm going to reset scores vector. Need to add it to the df first though
+ff <- ff %>%
+  group_by(player_id) %>%
+  mutate(
+    deviation = sd(total_fantasy_points, na.rm = TRUE),
+    mean = mean(total_fantasy_points, na.rm = TRUE)
+  ) %>%
+  ungroup()
 ```
 
-#practice with two people intead of 1
+this is filtering out outlier games... anything above or below 3 standard deviations (thinking of Charbonnet bonkers game, Jauan jennings crazy game, etc. Don't want those factoring into my projection)
 ```{r}
-#all the randomized scores for a player
-individual_scores <- c()
-all_player_scores <- data.frame()
+ff <- ff %>%
+  filter((is.rookie == FALSE & total_fantasy_points <= mean + 3 * deviation & total_fantasy_points >= mean - 3 * deviation) | is.rookie == TRUE)
+```
+
+Rookie data cleaning
+```{r}
+Rookie_database <- Rookie_database %>%
+  group_by(position, bucket) %>%
+  mutate(
+    deviation = sd(total_fantasy_points, na.rm = TRUE),
+    mean = mean(total_fantasy_points, na.rm = TRUE)
+  ) %>%
+  ungroup()
+```
+
+```{r}
+Rookie_database <- Rookie_database %>%
+  filter((total_fantasy_points <= mean + 3 * deviation & total_fantasy_points >= mean - 3 * deviation)) %>%
+  filter(total_fantasy_points >= 0) %>%
+  #added this line so there'd be no double counting once next season starts
+  filter(season != "2025")
 ```
 
 
 
+```{r}
+temp <- Rookie_database %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  select(player_id, round, pick, bucket)
+```
+
+I think this should be what I want... ff with round, pick, bucket in it. 
+```{r}
+ff <- left_join(ff, temp, by = "player_id")
+```
+
+
+Jared's team Week 1
+Order: 
+1. Joe Burrow 2. Bijan Robinson 3. Chase Brown 4. Mike Evans 5. De'Von Achane 6. Rhamondre Stevenson 7. Alec Pierce 8. Tucker Kraft 9. Breece Hall 10. Geno Smith 11. Ezekiel Elliot 12. Demarcus Robinson 13. Adam Thielen 14. Michael Pittman, 15. Keenan Allen 16. Andrei Iosivas 17. Johnny Mundt 18. Tre Tucker 19. Raheem Mostert 20. Gerald Everett 21. Jake Browning 22. Javon Baker 23. TJ Hockenson 24. Charlie Jones 25. Baker Mayfield 
+```{r}
+Jared_week1 <- c("00-0036442", "00-0038542", "00-0038597", "00-0031408", "00-0039040", "00-0036875", "00-0037664", "00-0038996", "00-0038120", "00-0030565", "00-0033045", "00-0032775", "00-0030035", "00-0036252", "00-0030279", "00-0038619", "00-0033246", "00-0038563", "00-0031687", "00-0033895", "00-0035100", "00-0039853", "00-0035229", "00-0038576", "00-0034855")
+```
+
+
+00-0035100
+This is deleting Jake Browning since Joe Burrow was starting week 1
+```{r}
+Jared_alt <- c("00-0036442", "00-0038542", "00-0038597", "00-0031408", "00-0039040", "00-0036875", "00-0037664", "00-0038996", "00-0038120", "00-0030565", "00-0033045", "00-0032775", "00-0030035", "00-0036252", "00-0030279", "00-0038619", "00-0033246", "00-0038563", "00-0031687", "00-0033895", "00-0039853", "00-0035229", "00-0038576", "00-0034855")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+#First test
 ```{r}
 for(i in 1:5000){
   rng <- runif(1, min = 0, max = 1)
@@ -190,42 +174,13 @@ for(i in 1:5000){
 ```
 
 
-#practice with Buffalo as a team
-I need to be able to generalize the quantile step so I can just loop through this a bunch to calculate everyone's quantiles. Going to practice with just the Bills first since I have something to compare it too with James Cook
-```{r}
-bills <- ff %>%
-  filter(posteam == "BUF") %>%
-  filter(!is.na(player_id)) %>%
-  select(player_id, total_fantasy_points)
-```
-
-
-
-How do I generalize this? 
-My first thought is to store all the IDs in a vector. Then, do ff$half_ppg %>% filter(player_id == vector(i)) and have i just increment all the way down and save it like this, but idk if that's the best way to do it or not. Then I could just run the rng thing a bunch
-```{r}
-ids <- unique(bills$player_id)
-```
-
-Made this to compare different models, see if linear interpolation works best or square root of everything.
-```{r}
-bills_averages <- bills %>%
-  group_by(player_id) %>%
-  summarize(
-    ppg = mean(total_fantasy_points)
-  )
-```
-
-```{r}
-bills_averages <- bills_averages[match(ids, bills_averages$player_id), ]
-```
-
 This should correctly generate every player's quantile in the dataset. 
 Now I just need to mesh the code I have above that gives me one score one time into this. 
 ```{r}
 for(i in 1:length(ids)){
-  player <- bills %>%
-    filter(player_id == ids[[i]])
+  player <- ff %>%
+    filter(posteam == "BUF") %>%
+    filter(season == "2023")
   
   player_quantile <- player$total_fantasy_points %>%
     #might need to generalize this b, specifically how many groups, too
@@ -235,83 +190,17 @@ for(i in 1:length(ids)){
   }
 ```
 
-#Attempt to combine my quantile and random score generation 2 players
-Left both parts on their own above this
-Think I should try doing this with two people before I do it with a million. Think I might create 5k data frames if I'm not careful
-
-```{r}
-rm(i, lower, individual_scores, upper, lower_percent, modeled_points, rng, player_quantile, higher_percent, all_player_scores)
-```
-
-
-#Linear Sim
-```{r}
-#stores column names with player's ids
-player_ids_vector <- c()
-for(i in 1:18){
-  #vector containing generated scores for one individual
-  individual_scores <- c()
-  #df with only the one player's stats
-  player <- bills %>%
-    filter(player_id == ids[[i]])
-  
-  #quantile for said one player
-  player_quantile <- player$total_fantasy_points %>%
-    #might need to generalize this b, specifically how many groups, too
-    quantile(probs = seq(0,1,.25))
-  
-      for(j in 1:8500){
-        rng <- runif(1, min = 0, max = 1)
-        if(rng < .25){
-          lower <- unname(player_quantile[1])
-          upper <- unname(player_quantile[2])
-          lower_percent <- 0
-          higher_percent <- .25
-        } else if(rng >= .25 & rng < .5){
-          lower <- unname(player_quantile[2])
-          upper<- unname(player_quantile[3])
-            lower_percent <- .25
-          higher_percent <- .5
-        } else if(rng >=.5 & rng < .75){
-          lower <- unname(player_quantile[3])
-          upper<- unname(player_quantile[4])
-          lower_percent <- .5
-          higher_percent <- .75
-        } else{
-          lower <- unname(player_quantile[4])
-          upper <- unname(player_quantile[5])
-          lower_percent <- .75
-          higher_percent <- 1
-        }
-        #self explanatory, but using the quantile and interpolation to take the rng and make it a fantasy score
-        modeled_points <- lower + (rng - lower_percent) * (upper - lower)/(higher_percent-lower_percent)
-        individual_scores <- c(individual_scores, modeled_points)
-      }
-     if(i == 1){
-         #I think chat gpt might have just given me a wrong suggestion here too.
-         all_player_scores <- data.frame(individual_scores)
-     } else{
-         all_player_scores <- cbind(all_player_scores, individual_scores)
-     }
-      player_ids_vector <- c(player_ids_vector, ids[[i]])
-}
-```
-
-```{r}
-colnames(all_player_scores) <- player_ids_vector
-```
-
 #Log Sim
 Every variable will have a 2, that means it's the log version, not the normal
 Messed up somewhere in here
 ```{r}
 #stores column names with player's ids
 player_ids_vector_2 <- c()
-for(i in 1:18){
+for(i in 1:2){
   #vector containing generated scores for one individual
   individual_scores_2 <- c()
   #df with only the one player's stats
-  player_2 <- bills %>%
+  player_2 <- ff %>%
     filter(player_id == ids[[i]])
   
   #quantile for said one player
@@ -327,7 +216,7 @@ for(i in 1:18){
           lower_2 <- unname(player_quantile_2[1])
           upper_2 <- unname(player_quantile_2[2])
           lower_percent_2 <- 0
-          higher_percent <- .25
+          higher_percent_2 <- .25
         } else if(rng_2 >= .25 & rng_2 < .5){
           lower_2 <- unname(player_quantile_2[2])
           upper_2 <- unname(player_quantile_2[3])
@@ -366,6 +255,117 @@ colnames(all_player_scores_2) <- player_ids_vector_2
 ```
 
 
+#Log sim updated structure (2/25)
+Didn't even test this, looks fairly close, I got tired and turned in for the night. 
+It ran, but I need to test the results and see if they're booty before I make this a function. 
+```{r}
+log_sim <- function(ff, fantasy_team) {
+#stores column names with player's ids
+player_ids_vector_2 <- c()
+all_player_scores_list_2 <- list()
+  ids_2 <- ff %>%
+    filter(player_id %in% fantasy_team) %>%
+    distinct(player_id) %>%
+    pull(player_id)
+for(i in 1:length(ids_2)){
+  #df with only the one player's stats
+  player_2 <- ff %>%
+    filter(player_id == ids_2[[i]])
+    
+  
+  #quantile for said one player
+  #Need to transform at this step
+  player_2$log_fp <- log1p(player_2$total_fantasy_points)
+  player_quantile_2 <- player_2$log_fp %>%
+    #might need to generalize this b, specifically how many groups, too
+    quantile(probs = seq(0,1,.25))
+  
+    individual_scores_2 <- numeric(12000)
+  
+      for(j in 1:12000){
+        rng_2 <- runif(1, min = 0, max = 1)
+        if(rng_2 < .25){
+          lower_2 <- unname(player_quantile_2[1])
+          upper_2 <- unname(player_quantile_2[2])
+          lower_percent_2 <- 0
+          higher_percent_2 <- .25
+        } else if(rng_2 >= .25 & rng_2 < .5){
+          lower_2 <- unname(player_quantile_2[2])
+          upper_2 <- unname(player_quantile_2[3])
+          lower_percent_2 <- .25
+          higher_percent_2 <- .5
+        } else if(rng_2 >=.5 & rng_2 < .75){
+          lower_2 <- unname(player_quantile_2[3])
+          upper_2 <- unname(player_quantile_2[4])
+          lower_percent_2 <- .5
+          higher_percent_2 <- .75
+        } else{
+          lower_2 <- unname(player_quantile_2[4])
+          upper_2 <- unname(player_quantile_2[5])
+          lower_percent_2 <- .75
+          higher_percent_2 <- 1
+        }
+        #include this in case upper and lower quantile equal each other (it was always gonna return 0)
+        if(upper_2 == lower_2){
+          #runif part just adds a little variation, not a huge deal since i'm running this 7500 times and this is a                 fringe case
+          modeled_points_2 <- expm1(lower)
+        } else {
+          interpolated_log <- lower_2 + (rng_2 - lower_percent_2) * (upper_2 - lower_2)/(higher_percent_2-lower_percent_2)
+        #transforming back to fantasy points
+        modeled_points_2 <- expm1(interpolated_log)
+        }
+        individual_scores_2[j] <- modeled_points_2
+      }
+      all_player_scores_list_2[[i]] <- individual_scores_2
+      player_ids_vector_2 <- c(player_ids_vector_2, ids_2[[i]])
+}
+
+all_player_scores_2 <- as.data.frame(do.call(cbind, all_player_scores_list_2))
+
+colnames(all_player_scores_2) <- player_ids_vector_2
+
+
+
+all_player_scores_2 <- cbind(observation = 1:12000, all_player_scores_2)
+
+long_scores_2_df <- all_player_scores_2 %>%
+  pivot_longer(cols = -observation, names_to = "player_id", values_to = "score")
+
+#adding position, name to the df (basically so I can check my work better)
+long_scores_2_df <- long_scores_2_df %>%
+  left_join(ff %>%
+              distinct(player_id, .keep_all = TRUE) %>%
+              select(player_id, full_name, position), by = "player_id")
+
+return(long_scores_2_df)
+}
+```
+
+
+```{r}
+log_averages <- jared %>%
+  group_by(player_id, full_name) %>%
+  summarize(
+    log_avg = mean(score)
+  ) %>%
+  ungroup()
+```
+
+```{r}
+linear_averages <- jared %>%
+  group_by(player_id) %>%
+  summarize(
+    lin_avg = mean(score)
+  ) %>%
+  ungroup()
+```
+
+
+
+```{r}
+colnames(all_player_scores_2) <- player_ids_vector_2
+```
+
 ```{r}
 linear_averages <- c()
 for(i in 1:18){
@@ -403,7 +403,539 @@ bills_averages$transformed_averages <- transformed_averages
 ```
 
 
-I honestly think that the transformed averages might perform worse. Kind of weird. Maybe my data just isn't as spread out as I thought. That would make the linear one look better fs. 
+
+
+#linear sim 2/18
+Guys like Raheem Mostert are kind of the locally accurate thing that Seth Walder was talking about. I think this is a solid model, but that's gonna be a place where my ish falls short is with ppl whose roles have clearly changed. I could probably add a condition where he gets minus touches, kind of like I'm planning to add for Charbonnet. That feels like a lot of manual work for during the season, but I'll work on it though.
+
+Probably only wanna do this for bigger names/handcuffs. Not gonna boost guys like Brenton Strange from 2024, but Charbonnet/Raheem Mostert feels more worth my time.
+```{r}
+#stores column names with player's ids
+player_ids_vector <- c()
+all_player_scores_list <- list()
+ids <- ff %>%
+  filter(player_id %in% Jared_alt) %>%
+  distinct(player_id) %>%
+  pull(player_id)
+for(i in 1:length(Jared_alt)){
+  #vector containing generated scores for one individual
+  individual_scores <- c()
+  #df with only the one player's stats
+  player <- ff %>%
+    filter(player_id == ids[[i]])
+  
+  #quantile for said one player
+  player_quantile <- player$total_fantasy_points %>%
+    #might need to generalize this b, specifically how many groups, too
+    quantile(probs = seq(0,1,.25))
+  
+    individual_scores <- numeric(7500)
+    
+      for(j in 1:7500){
+        rng <- runif(1)
+        if(rng < .25){
+          lower <- unname(player_quantile[1])
+          upper <- unname(player_quantile[2])
+          lower_percent <- 0
+          higher_percent <- .25
+        } else if(rng >= .25 & rng < .5){
+          lower <- unname(player_quantile[2])
+          upper<- unname(player_quantile[3])
+            lower_percent <- .25
+          higher_percent <- .5
+        } else if(rng >=.5 & rng < .75){
+          lower <- unname(player_quantile[3])
+          upper <- unname(player_quantile[4])
+          lower_percent <- .5
+          higher_percent <- .75
+        } else{
+          lower <- unname(player_quantile[4])
+          upper <- unname(player_quantile[5])
+          lower_percent <- .75
+          higher_percent <- 1
+        }
+        #include this in case upper and lower quantile equal each other (it was always gonna return 0)
+        if(upper == lower){
+          #runif part just adds a little variation, not a huge deal since i'm running this 7500 times and this is a                 fringe case
+          modeled_points <- lower
+        } else {
+          modeled_points <- lower + (rng - lower_percent) * (upper - lower)/(higher_percent-lower_percent)
+        }
+        individual_scores[j] <- modeled_points
+      }
+      all_player_scores_list[[i]] <- individual_scores
+      player_ids_vector <- c(player_ids_vector, ids[[i]])
+}
+
+all_player_scores <- as.data.frame(do.call(cbind, all_player_scores_list))
+
+colnames(all_player_scores) <- player_ids_vector
+
+
+
+all_player_scores <- cbind(observation = 1:7500, all_player_scores)
+
+long_scores_df <- all_player_scores %>%
+  pivot_longer(cols = -observation, names_to = "player_id", values_to = "score")
+
+#adding position, name to the df (basically so I can check my work better)
+long_scores_df <- long_scores_df %>%
+  left_join(ff %>%
+              distinct(player_id, .keep_all = TRUE) %>%
+              select(player_id, full_name, position))
+```
+
+
+#Linear sim function 2/25
+This looks good. I'm honestly pretty happy with this overall. I think I might need to make the fantasy_team input a little different (a df with name and player_id so that building the shiny app will be easier)
+Also might want to increase number of observations too. Other than that I'm happy
+```{r}
+linear_sim <- function(ff, fantasy_team) {
+#stores column names with player's ids
+player_ids_vector <- c()
+all_player_scores_list <- list()
+ids <- ff %>%
+  filter(player_id %in% fantasy_team) %>%
+  distinct(player_id) %>%
+  pull(player_id)
+for(i in 1:length(ids)){
+  #vector containing generated scores for one individual
+  individual_scores <- c()
+  #df with only the one player's stats
+  player <- ff %>%
+    filter(player_id == ids[[i]])
+  
+  #quantile for said one player
+  player_quantile <- player$total_fantasy_points %>%
+    #might need to generalize this b, specifically how many groups, too
+    quantile(probs = seq(0,1,.25))
+  
+    individual_scores <- numeric(12000)
+    
+      for(j in 1:12000){
+        rng <- runif(1)
+        if(rng < .25){
+          lower <- unname(player_quantile[1])
+          upper <- unname(player_quantile[2])
+          lower_percent <- 0
+          higher_percent <- .25
+        } else if(rng >= .25 & rng < .5){
+          lower <- unname(player_quantile[2])
+          upper<- unname(player_quantile[3])
+            lower_percent <- .25
+          higher_percent <- .5
+        } else if(rng >=.5 & rng < .75){
+          lower <- unname(player_quantile[3])
+          upper <- unname(player_quantile[4])
+          lower_percent <- .5
+          higher_percent <- .75
+        } else{
+          lower <- unname(player_quantile[4])
+          upper <- unname(player_quantile[5])
+          lower_percent <- .75
+          higher_percent <- 1
+        }
+        #include this in case upper and lower quantile equal each other (it was always gonna return 0)
+        if(upper == lower){
+          #runif part just adds a little variation, not a huge deal since i'm running this 7500 times and this is a                 fringe case
+          modeled_points <- lower
+        } else {
+          modeled_points <- lower + (rng - lower_percent) * (upper - lower)/(higher_percent-lower_percent)
+        }
+        individual_scores[j] <- modeled_points
+      }
+      all_player_scores_list[[i]] <- individual_scores
+      player_ids_vector <- c(player_ids_vector, ids[[i]])
+}
+
+all_player_scores <- as.data.frame(do.call(cbind, all_player_scores_list))
+
+colnames(all_player_scores) <- player_ids_vector
+
+
+
+all_player_scores <- cbind(observation = 1:12000, all_player_scores)
+
+long_scores_df <- all_player_scores %>%
+  pivot_longer(cols = -observation, names_to = "player_id", values_to = "score")
+
+#adding position, name to the df (basically so I can check my work better)
+long_scores_df <- long_scores_df %>%
+  left_join(ff %>%
+              distinct(player_id, .keep_all = TRUE) %>%
+              select(player_id, full_name, position))
+return(long_scores_df)
+}
+```
+
+#Rookie quantile work
+I'm way too exhausted to work on this right now. I think what I need to do is add buckets to my rookie database. Something like for QBs, WRs and RBs high first, mid first, low first, 2nd, third, 4th and 5th, 6th and 7th as buckets. TEs I think the first round will have to be 2 buckets. 
+
+I should really just start small and then work up. Something like just trying to build a weighted quantile for a specific player like Malik Nabers. Then as ish starts going more, build it out bigger
+
+I think wtd.quantile helped me think of a better way to do this. Definitely am gonna want to add the rookie draft capital to ff though. But it takes two vectors, the scores and then the weights (equal length). So what i think I should do is if they're a rookie, take the scores they already have, then go to Rookie database, filter if they're in the same bucket, then capture all those scores, then build out the weighted quantile. So I will have to add which bucket they're in to ff. I think the easiest way might just be to make a temp df that has the player id, round, pick and bucket, and then just join then and save it as ff. Everyone who isn't a rookie should have NAs in this column. I'll have to add buckets to AllRookies as well
+
+
+
+Changed this to 7 for testing purposes. Want to see if the average for nabers using this method of sim is close to Sleeper's projection for him. I'm not necessarily trying to be better on a player projection front, but just have it be close bc my team projection method is way better. 
+```{r}
+nabers <- ff %>%
+  filter(season == "2024") %>%
+  filter(player_id == "00-0039337") %>%
+  filter(week <= 7)
+```
+
+Trying to take Nabers' position and bucket from ff
+```{r}
+player_position <- ff %>%
+  filter(player_id == "00-0039337") %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  pull(position)
+```
+
+```{r}
+player_bucket <- ff %>%
+  filter(player_id == "00-0039337") %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  pull(bucket)
+```
+
+
+```{r}
+WR_bucket1_scores <- Rookie_database %>% 
+  filter(position == player_position & bucket == player_bucket) %>%
+  pull(total_fantasy_points)
+```
+
+```{r}
+nabers_scores <- nabers %>%
+  pull(total_fantasy_points)
+```
+
+Nabers' scores are still first, which is great. 
+```{r}
+length(c(nabers_scores, WR_bucket1_scores))
+```
+
+```{r}
+#player + bucket
+tot_num_scores <- length(WR_bucket1_scores)
+#number of individual's scores
+player_num_scores <- length(nabers_scores)
+#number of just bucket player's scores
+bucket_num_scores <- length(WR_bucket1_scores)
+```
+
+Trying to make this so that it weights the player scores as close to 50% with the bucket scores. Don't even know if 50 is the best number tbh, i'm gonna have to mess around with that 
+```{r}
+player_weights <- bucket_num_scores / player_num_scores
+combo_weights <- c(rep(player_weights, player_num_scores), rep(1, bucket_num_scores))
+```
+
+
+Need to look into this. need to find an easy way to make a vector that has weights in it, need to see if the weights thing is even an argument in this b
+Weights worked, gonna need to filter out outliers for this ish too... JaMarr chase had a 55.6 as a rookie lol
+
+This is so horny!!!
+```{r}
+wtd.quantile(c(nabers_scores, WR_bucket1_scores), weights = combo_weights)
+```
+
+#3/11 generalized rookie quantile
+Need to try adding this to linear sim function as an if else and see what happens. I feel pretty good about this though tbh.
+```{r}
+#Nabers, Ladd, Daniels, Tyrone Tracey, Bowers, Keon, Rome, AD Mitchell
+id_rookies <- c("00-0039337", "00-0039915", "00-0039910", "00-0039384", "00-0039338", "00-0039901", "00-0039919", "00-0039890")
+id_short_rookies <- c("00-0039337", "00-0039915")
+```
+
+```{r}
+#if the player pulled from ids is a rookie
+#if((player %>% distinct(player_id, .keep_all = TRUE))$is.rookie == TRUE){
+
+  player_position <- ff %>%
+  filter(player_id == "00-0039337") %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  pull(position)
+  
+  player_bucket <- ff %>%
+  filter(player_id == "00-0039337") %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  pull(bucket)
+  
+  #scores from the same position and bucket as the rookie we're looking at
+  position_bucket_scores <- Rookie_database %>% 
+  filter(position == player_position & bucket == player_bucket) %>%
+  pull(total_fantasy_points)
+  
+  player_scores <- player %>%
+  pull(total_fantasy_points)
+  
+  # #player + bucket
+  # tot_num_scores <- length(WR_bucket1_scores)
+  #number of individual's scores
+  player_num_scores <- length(player_scores)
+  #number of just bucket player's scores
+  bucket_num_scores <- length(position_bucket_scores)
+  
+  #how rookie's scores are being weighted
+  player_weights <- bucket_num_scores / player_num_scores
+  #combo of rookie's scores weights and bucket's scores weights
+  combo_weights <- c(rep(player_weights, player_num_scores), rep(1, bucket_num_scores))
+  
+  player_quantile <- wtd.quantile(c(player_scores, position_bucket_scores), weights = combo_weights)
+  
+  print(player_quantile)
+#}
+
+```
+
+
+**Need to test how this looks**
+Idk if this is gonna be the best right now. I think individual player's scores might need more weight than it's getting rn from the looks of it. Also need to test how this is going to work as time goes on... so like after week 3 is my projection dog crap
+
+How do I test this? How does this fit into my linear sim? 
+
+#multiple rookie test, 3/15
+I should figure out how to make this loop next. If i can do that/pull the position and bucket for each guy, I think I can do this pretty well in terms of finding at least a kind of efficient way to make a table to check what I should be weighing these things at. 
+
+This is close, not quite right. it's only saving for ladd rn, not the first guy in the df. need to take a look at this tonight. 
+
+I think the problem is that I'm redefining all player scores list and player ids vector again in the loop when it's already done outside of it. I think that just got messed up when I combined the Nabers one player example with the two players example.
+```{r}
+player_ids_vector <- c()
+all_player_scores_list <- list()
+ids <- ff %>%
+  filter(player_id %in% id_short_rookies) %>%
+  distinct(player_id) %>%
+  pull(player_id)
+for(i in 1:length(ids)){
+  #vector containing generated scores for one individual
+  individual_scores <- c()
+  #df with only the one player's stats
+  player <- ff %>%
+    filter(player_id == ids[[i]]) %>%
+    arrange(desc(season))
+  
+  if((player %>% distinct(player_id, .keep_all = TRUE))$is.rookie == TRUE){
+
+ 
+  player_position <- ff %>%
+  filter(player_id == ids[[i]]) %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  pull(position)
+  
+  player_bucket <- ff %>%
+  filter(player_id == ids[[i]]) %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  pull(bucket)
+  
+  #scores from the same position and bucket as the rookie we're looking at
+  position_bucket_scores <- Rookie_database %>% 
+  filter(position == player_position & bucket == player_bucket) %>%
+  pull(total_fantasy_points)
+  
+  player_scores <- player %>%
+  pull(total_fantasy_points)
+  
+
+  #number of individual's scores
+  player_num_scores <- length(player_scores)
+  #number of just bucket player's scores
+  bucket_num_scores <- length(position_bucket_scores)
+  
+  #how rookie's scores are being weighted
+  player_weights <- bucket_num_scores / player_num_scores
+  #combo of rookie's scores weights and bucket's scores weights
+  combo_weights <- c(rep(player_weights, player_num_scores), rep(1, bucket_num_scores))
+  
+  player_quantile <- wtd.quantile(c(player_scores, position_bucket_scores), weights = combo_weights)
+  }
+  
+  individual_scores <- numeric(12000)
+    
+  for(j in 1:12000){
+          rng <- runif(1)
+          if(rng < .25){
+            lower <- unname(player_quantile[1])
+            upper <- unname(player_quantile[2])
+            lower_percent <- 0
+            higher_percent <- .25
+          } else if(rng >= .25 & rng < .5){
+            lower <- unname(player_quantile[2])
+            upper<- unname(player_quantile[3])
+              lower_percent <- .25
+            higher_percent <- .5
+          } else if(rng >=.5 & rng < .75){
+            lower <- unname(player_quantile[3])
+            upper <- unname(player_quantile[4])
+            lower_percent <- .5
+            higher_percent <- .75
+          } else{
+            lower <- unname(player_quantile[4])
+            upper <- unname(player_quantile[5])
+            lower_percent <- .75
+            higher_percent <- 1
+          }
+          #include this in case upper and lower quantile equal each other (it was always gonna return 0)
+          if(upper == lower){
+            modeled_points <- lower
+          } else {
+            modeled_points <- lower + (rng - lower_percent) * (upper - lower)/(higher_percent-lower_percent)
+          }
+          individual_scores[j] <- modeled_points
+        }
+         all_player_scores_list[[i]] <- individual_scores
+         player_ids_vector <- c(player_ids_vector, ids[[i]])
+}
+  
+   all_player_scores <- as.data.frame(do.call(cbind, all_player_scores_list))
+   
+   colnames(all_player_scores) <- player_ids_vector
+  
+  
+  
+  all_player_scores <- cbind(observation = 1:12000, all_player_scores)
+  
+  long_scores_df <- all_player_scores %>%
+    pivot_longer(cols = -observation, names_to = "player_id", values_to = "score")
+
+  #adding position, name to the df (basically so I can check my work better)
+  # long_scores_df <- long_scores_df %>%
+  #   ungroup() %>%
+  #   left_join(ff %>%
+  #               distinct(player_id, .keep_all = TRUE) %>%
+  #               select(player_id, full_name, position), by = "player_id") 
+```
+
+
+This line is pissing me off so much. I have no idea what is wrong. My structures are right, i have no NAs. Seriously have no clue why this is happening, even ChatGPT is confused af
+```{r}
+linear_averages <- long_scores_df %>%
+  group_by(player_id) %>%
+  summarize(
+    lin_avg = mean(score)
+  ) %>%
+  ungroup()
+```
+
+
+Right now, that looks like a pretty decent number. might've come in a little hot, not sure. 
+Should really test guys like Ladd McConkey and Marv later in the season too, see what happens with them. I think that would give me some good outlier cases and might help me make the weights better, but this is a really cool start though.
+
+3/10 - This is good stuff. 
+Probably need a more concrete way to determine what my weights are/if my projection was bad. I should probably go through and do this for each week for a couple guys tbh, preferrably all different point levels/positions, and see if there's a number that works best. Maybe start with like 20-80, if one seems better, try numbers in those ranges, stuff like that? 
+
+Want to store his position and bucket in two variables so that I can go back into rookie database and pull the scores of players from that bucket. How do I pull them by player instead of by index? 
+Think this is closer to being able to work with now... Still gotta think about what i wanna do with it
+I wanna pull the position and bucket for each player, then go to all rookie database, filter the ppl in the same position and bucket, and then combine that with Malik Nabers' scores. Then use wtd.quantile to make a rookie projection. Too tired to think straight about this rn. 
+
+
+
+#optimize function
+My boy Chet Gupta clutched tf up here
+```{r}
+optimize_team <- function(long_scores_df) {
+optimized_team <- long_scores_df %>%
+  arrange(observation, desc(score)) %>%
+  group_by(observation) %>%
+  mutate(
+    qb_rank = cumsum(position == "QB"),
+    rb_rank = cumsum(position == "RB"),
+    wr_rank = cumsum(position == "WR"),
+    te_rank = cumsum(position == "TE"),
+  ) %>%
+  filter(
+    (position == "QB" & qb_rank <= 1) |
+    (position == "RB" & rb_rank <= 2) |
+    (position == "WR" & wr_rank <= 2) |
+    (position == "TE" & te_rank <= 1)
+  ) %>%
+  ungroup()
+
+leftovers <- long_scores_df %>%
+  anti_join(optimized_team, by = c("observation", "player_id"))
+
+flex_players <- leftovers %>%
+  filter(position %in% c("RB", "WR", "TE")) %>%
+  arrange(observation, desc(score)) %>%
+  group_by(observation) %>%
+  slice_head(n = 2) %>%
+  ungroup()
+
+second_leftovers <- anti_join(long_scores_df, optimized_team, by = c("observation", "player_id"))
+
+second_leftovers <- anti_join(second_leftovers, flex_players, by = c("observation", "player_id"))
+
+superflexes <- second_leftovers %>%
+  arrange(observation, desc(score)) %>% 
+  group_by(observation) %>%
+  slice_head(n=1) %>%
+  ungroup()
+
+optimized_team <- rbind(optimized_team %>% select(observation, player_id, score, full_name, position), flex_players, superflexes) %>%
+  arrange(observation)
+
+return(optimized_team)
+}
+```
+
+```{r}
+Jared_sim <- linear_sim(ff, Jared_week1)
+```
+
+```{r}
+Jared_optimal <- optimize_team(Jared_sim)
+```
+
+#compare tab
+I think when I actually put this on my app, I should just truncate the scores. I don't want it to be so obvious that it changes all the time, and I don't think it would change the experience for anyone. Could pretty easily do the same thing for the max and min projection in the box under the graph too. 
+```{r}
+compare_tab <- test %>%
+  group_by(observation) %>%
+  summarize(
+    score = sum(score)
+  ) %>%
+  ungroup()
+
+mean(compare_tab$score)
+```
+
+```{r}
+compare_tab2 <- Jared_bb2 %>%
+  group_by(observation) %>%
+  summarize(
+    score = sum(score)
+  ) %>%
+  ungroup()
+
+mean(compare_tab2$score)
+```
+
+
+#adding players who already played
+```{r}
+add_player <- function(long_scores_df, user_score, user_position){
+  observation <- c(1:7500)
+  temp <- tibble(player_id = 1, score = user_score, full_name = "Chair", position = user_position)
+  temp <- cbind(observation, temp)
+  temp <- rbind(long_scores_df, temp)
+  temp <- temp %>%
+    arrange(observation, desc(score))
+  return(temp)
+}
+```
+
+
+
+Side note: of course the linear projection fit super well. I was using data that was from the future to predict what happens. That doesn't mean not knowing the weeks it will perform better.
+I want to test 4 things:
+1. Linear sim
+2. Log sim
+3. Linear sim with 3 SDs filtered out - leaning linear sim instead. Still need to actually prove this (don't think i'm gonna... too much work rn to filter out everyone's ish.), but it's looking like this one is just better. Runs faster, projected closer for Jared's week 1
+4. Log sim with 3 SDs filtered out
+
+Then want to try this again for the rookies. 
 
 
 Next steps for my project:
@@ -422,9 +954,19 @@ just going to make another function and then put all the variable names as 2 lol
 Biggest problems i foresee with my projection:
 1. handcuff players 
   what happens when KW3 goes down and my charb projection stays the same? obviously that's not right
+      Best guess right now: add a term - fp/touch * normal dist centered around touches vacqted. going to have to
+      manually input for guys (i think i can guesstimate how a backfield is gonna be split than actually have 
+      a mathematical reasoning behind it)
+        - need to test using 2023 data on 2024 season. 
 2. rookies
   what happens when 3 games into the season, it's obvious that BTJ and Ladd are better than their quadrant but I'm still
   grouping by their draft capital? Is there some way I can weight recent production more than the past, especially for 
   young guys? 
+    Hmisc:wtd.quantile() - weight the persons scores equally to the scores of rookies in the same bucket. I think this
+    will be a much more effective way to estimate their scores, but I'm gonna try it using 2023 data on 2024
+    season to see what the best method is
 
+**Important**
+When I'm telling everyone how to use this, need to make sure that they don't add a bunch of ppl who are hurt/backup QBs. If they're not gonna play, just don't add them. I don't have time to update them all every week, but I'll update handcuff running backs and stuff like that where I can
 
+Going to need a remove player from list function, and also a clear_all function for the shiny app.
