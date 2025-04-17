@@ -9,8 +9,7 @@ output: html_document
 To do list (3/18)
 1. Might need to rethink how the optimize and generate functions are done. What if I passed two teams into the generate one? and then the add function was something like add_player(score, position, team) ? I think that might be the best way to do it so I only have to run the optimize and generate functions once 
 2. 4/12 Test log sim again, both for rookies and for all. 
-3. 4/12 redo log and linear sim to make long_scores_df right away. would make the whole process way more efficient to not be creating 2 massive dfs when I could just do 1 
-4. 4/12 filter out before week 12 in Rookie database when I'm doing my bucket calculations. Why am I using jamar chase's playoff scores? with late rookie breakout/stuff like that, I think it might be wise to just use the weeks that I'm looking at projecting for an individual player. 
+3. 4/12 filter out before week 12 in Rookie database when I'm doing my bucket calculations. Why am I using jamar chase's playoff scores? with late rookie breakout/stuff like that, I think it might be wise to just use the weeks that I'm looking at projecting for an individual player. 
 ```{r, message=FALSE}
 library(tidyverse)
 library(dplyr)
@@ -26,6 +25,11 @@ library(Hmisc)
 Sleeper <- read_csv("Rookie_Sleeper_Projections.csv")
 ```
 
+```{r}
+Sleeper <- Sleeper %>%
+  rename(Sleeper_proj = proj_fp)
+```
+
 
 ```{r, message=FALSE}
 load("All_Players_Database.RData")
@@ -34,23 +38,15 @@ load("RookieDatabase.RData")
 
 ```{r}
 Sleeper <- Sleeper %>%
-  select(full_name, proj_fp, week) %>%
-  filter(proj_fp != 0)
-```
-
-```{r}
-Sleeper %>%
-  group_by(full_name) %>%
-  summarise(
-    total = n()
-  )
+  select(full_name, Sleeper_proj, week) %>%
+  filter(Sleeper_proj != 0)
 ```
 
 mcmillan, ray davis - both had projections in a week and didnt play
 ```{r}
 Sleeper <- inner_join(Sleeper, Rookie_database, by = c("full_name", "week")) 
 ```
-
+Going to want to join this df with my projections, keeping only the ones that are in Sleeper and projections 
 
 #adding bucket to/pick to ff
 ```{r}
@@ -250,28 +246,44 @@ linear_averages <- long_scores_df %>%
   ungroup()
 ```
 
-
-
-
-#linear sim 2/18
-Guys like Raheem Mostert are kind of the locally accurate thing that Seth Walder was talking about. I think this is a solid model, but that's gonna be a place where my ish falls short is with ppl whose roles have clearly changed. I could probably add a condition where he gets minus touches, kind of like I'm planning to add for Charbonnet. That feels like a lot of manual work for during the season, but I'll work on it though.
-
-Probably only wanna do this for bigger names/handcuffs. Not gonna boost guys like Brenton Strange from 2024, but Charbonnet/Raheem Mostert feels more worth my time.
-
-
-
-#Linear sim function 2/25
-This looks good. I'm honestly pretty happy with this overall. I think I might need to make the fantasy_team input a little different (a df with name and player_id so that building the shiny app will be easier)
-Also might want to increase number of observations too. Other than that I'm happy
+#Efficient Linear_sim() 4/17
 ```{r}
 linear_sim <- function(ff, fantasy_team) {
 #stores column names with player's ids
 player_ids_vector <- c()
 all_player_scores_list <- list()
+ff <- ff %>%
+  arrange(full_name)
+
+#right now, just 1 for each player. need 12000
 ids <- ff %>%
   filter(player_id %in% fantasy_team) %>%
   distinct(player_id) %>%
   pull(player_id)
+
+full_ids <- rep(ids, each = 12000)
+
+#right now, just 1 for each player. need 12000
+positions <- ff %>%
+  filter(player_id %in% fantasy_team) %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  pull(position)
+
+full_positions <- rep(positions, each = 12000)
+
+#right now, just 1 for each player. need 12000
+names <- ff %>%
+  filter(player_id %in% fantasy_team) %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  pull(full_name)
+
+full_names <- rep(names, each = 12000)
+
+observations <- 1:12000
+
+full_observations <- rep(observations, each = length(fantasy_team))
+
+
 for(i in 1:length(ids)){
   #vector containing generated scores for one individual
   individual_scores <- c()
@@ -319,25 +331,17 @@ for(i in 1:length(ids)){
         individual_scores[j] <- modeled_points
       }
       all_player_scores_list[[i]] <- individual_scores
-      player_ids_vector <- c(player_ids_vector, ids[[i]])
 }
 
-all_player_scores <- as.data.frame(do.call(cbind, all_player_scores_list))
 
-colnames(all_player_scores) <- player_ids_vector
+long_scores_df <- data.frame(
+  observation = full_observations,
+  player_id = full_ids,
+  score = unlist(all_player_scores_list),
+  full_name = full_names,
+  position = full_positions
+)
 
-
-
-all_player_scores <- cbind(observation = 1:12000, all_player_scores)
-
-long_scores_df <- all_player_scores %>%
-  pivot_longer(cols = -observation, names_to = "player_id", values_to = "score")
-
-#adding position, name to the df (basically so I can check my work better)
-long_scores_df <- long_scores_df %>%
-  left_join(ff %>%
-              distinct(player_id, .keep_all = TRUE) %>%
-              select(player_id, full_name, position))
 return(long_scores_df)
 }
 ```
@@ -407,9 +411,6 @@ wtd.quantile(c(nabers_scores, WR_bucket1_scores), weights = combo_weights)
 
 #3/11 generalized rookie quantile
 Need to try adding this to linear sim function as an if else and see what happens. I feel pretty good about this though tbh.
-
-
-
 ```{r}
 #Nabers, Ladd, Daniels, Tyrone Tracey, Bowers, Keon, Rome, AD Mitchell
 # id_rookies <- c("00-0039337", "00-0039915", "00-0039910", "00-0039384", "00-0039338", "00-0039901", "00-0039919", "00-0039890")
