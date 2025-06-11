@@ -1,0 +1,59 @@
+---
+title: "AllPlayersDatabase"
+author: "Harrison Stanton"
+date: "2025-02-11"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(rsconnect)
+library(kableExtra)
+library(nflfastR)
+library(nflreadr)
+```
+
+
+Importing rookie database: 
+```{r}
+load("RookieDatabase.RData")
+```
+
+#Looping attempt
+```{r}
+for(i in 2015:2024){
+    ff <- load_ff_opportunity(seasons = i) %>%
+      filter(!is.na(player_id))
+    
+    ff <- ff %>%
+      mutate(
+        season_player_id = paste(season, player_id, sep = " "), 
+        half_ppg = 0.5 * receptions + .04 * pass_yards_gained + .1 * (rec_yards_gained + rush_yards_gained) + 4 * pass_touchdown + 6 * (rush_touchdown + rec_touchdown) + 2 * (pass_two_point_conv + rush_two_point_conv + rec_two_point_conv) + -2 * (pass_interception + rec_fumble_lost + rush_fumble_lost)
+      ) %>%
+        select(season, week, posteam, game_id, player_id, season_player_id, full_name, position, pass_yards_gained, pass_touchdown, pass_interception,pass_two_point_conv, receptions, rec_attempt, rec_yards_gained, rec_touchdown, rec_fumble_lost, rec_two_point_conv, rush_attempt, rush_yards_gained, rush_touchdown, rush_two_point_conv, rush_fumble_lost, total_fantasy_points, half_ppg)
+    
+    if(i == 2015){
+      All_Players_Database <- data.frame(ff)
+    }else{
+      All_Players_Database <- rbind(All_Players_Database, ff)
+    }
+}
+```
+
+```{r}
+All_Players_Database <- All_Players_Database %>%
+  mutate(
+    is.rookie = 
+      case_when(
+        season_player_id %in% Rookie_database$season_player_id ~ TRUE,
+        TRUE ~ FALSE
+      )
+  )
+```
+
+
+```{r}
+save(All_Players_Database,
+     file = "All_Players_Database.RData")
+```

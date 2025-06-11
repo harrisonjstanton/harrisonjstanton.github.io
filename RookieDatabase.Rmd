@@ -1,0 +1,84 @@
+---
+title: "Player databases"
+author: "Harrison Stanton"
+date: "2025-02-11"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(rsconnect)
+library(kableExtra)
+library(nflfastR)
+library(nflreadr)
+```
+
+
+```{r}
+rookies <- load_draft_picks() %>%
+  filter(position %in% c("QB", "WR", "TE", "RB")) %>%
+  filter(season >= 2015) %>%
+  select(season, round, pick, team, gsis_id, pfr_player_name, position)
+```
+
+
+
+```{r}
+rookies <- rookies %>%
+  mutate(
+    season_player_id = paste(season, gsis_id, sep = " ")
+  )
+```
+
+
+```{r}
+for(i in 2015:2024){
+    ff <- load_ff_opportunity(seasons = i)
+    
+    ff <- ff %>%
+      mutate(
+        season_player_id = paste(season, player_id, sep = " ")
+               )
+    
+    ff <- ff %>%
+      filter(season_player_id %in% rookies$season_player_id) %>%
+      select(season, week, posteam, game_id, player_id, season_player_id, full_name, position, pass_yards_gained, pass_touchdown, pass_interception,pass_two_point_conv, receptions, rec_attempt, rec_yards_gained, rec_touchdown, rec_fumble_lost, rec_two_point_conv, rush_attempt, rush_yards_gained, rush_touchdown, rush_two_point_conv, rush_fumble_lost, total_fantasy_points)
+    
+    ff<- ff %>%
+      mutate(
+        half_ppg = 0.5 * receptions + .04 * pass_yards_gained + .1 * (rec_yards_gained + rush_yards_gained) + 4 * pass_touchdown + 6 * (rush_touchdown + rec_touchdown) + 2 * (pass_two_point_conv + rush_two_point_conv + rec_two_point_conv) + -2 * (pass_interception + rec_fumble_lost + rush_fumble_lost)
+    )
+    
+    ff <- ff %>%
+      filter(!is.na(player_id))
+    
+    if(i == 2015){
+      Rookie_database <- data.frame(ff)
+    } else{
+      Rookie_database <- rbind(Rookie_database, ff)
+    }
+}
+```
+
+
+```{r}
+Rookie_database <- Rookie_database %>%
+  rename(gsis_id = player_id)
+```
+
+
+```{r}
+Rookie_database <- inner_join(Rookie_database, rookies %>% select(gsis_id, round, pick), by = "gsis_id")
+```
+
+```{r}
+Rookie_database <- Rookie_database %>%
+  rename(player_id = gsis_id)
+```
+
+
+```{r}
+save(Rookie_database,
+     file = "RookieDatabase.RData")
+```

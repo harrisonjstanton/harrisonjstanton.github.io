@@ -1,0 +1,216 @@
+---
+title: "Draft bucket calculations"
+author: "Harrison Stanton"
+date: "2025-05-22"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(nflfastR)
+library(nflreadr)
+library(stats)
+```
+
+The whole goal of this is to randomly sample each position and bucket to see on average how many games these players were not injured and scored 0 fantasy points. I'm going to have to do manual work, but using some statistical techniques can at least limit that and give an approximation for how many 0s I need to be entering. The point of this is to make my projections for rookies in my other model by avoiding selection bias. Before, my dataset only included guys who played snaps/received targets or things like that, meaning all the bad ones who never made the roster or who were only special teamers were filtered out. This way, I'm giving more accurate projections for what each of these players are. 
+
+
+```{r, message=FALSE}
+draft <- load_draft_picks(seasons = TRUE, file_type = getOption("nflreadr.prefer", default = "rds")) %>%
+  filter(season >= 2015) %>%
+  filter(position %in% c("WR", "RB", "TE", "QB"))
+```
+
+
+```{r}
+temp_WR <- draft %>%
+  filter(position == "WR") %>% 
+  mutate(
+    bucket = 
+      case_when(
+        pick < 15 ~ 1,
+        pick < 33 & pick >= 16 ~ 2,
+        pick < 66 & pick >= 33 ~ 3,
+        pick < 100 & pick >= 66 ~ 4,
+        pick < 170 & pick >= 100 ~ 5,
+        TRUE ~ 6
+      )
+  ) %>%
+  arrange(bucket)
+```
+
+
+```{r}
+temp_RB <- draft %>%
+  filter(position == "RB") %>% 
+  mutate(
+    bucket = 
+      case_when(
+        pick < 33 ~ 1,
+        pick < 66 & pick >= 33 ~ 2,
+        pick < 100 & pick >= 66 ~ 3,
+        pick < 140 & pick >= 100 ~ 4,
+        pick < 180 & pick >= 140 ~ 5,
+        TRUE ~ 6
+      )
+  )
+```
+
+
+```{r}
+temp_QB <- draft %>%
+  filter(position == "QB") %>% 
+  mutate(
+    bucket = 
+      case_when(
+        pick < 15 ~ 1,
+        pick < 32 & pick >= 15 ~ 2,
+        pick < 66 & pick >= 32 ~ 3,
+        pick < 120 & pick >= 66 ~ 4,
+        pick < 180 & pick >= 120 ~ 5,
+        pick < 180 & pick >= 150 ~ 6,
+        TRUE ~ 7
+      )
+  )
+```
+
+
+```{r}
+temp_TE <- draft %>%
+  filter(position == "TE") %>% 
+  mutate(
+    bucket = 
+      case_when(
+        pick < 33 ~ 1,
+        pick < 68 & pick >= 33 ~ 2,
+        pick < 95 & pick >= 68 ~ 3,
+        pick < 120 & pick >= 120 ~ 4, 
+        pick < 155 & pick >= 120 ~ 5,
+        pick < 200 & pick >= 155 ~ 6,
+        TRUE ~ 7
+      )
+  )
+```
+
+
+
+```{r}
+temp <- rbind(temp_QB, temp_RB, temp_WR, temp_TE)
+```
+
+```{r}
+draft <- inner_join(draft, temp %>% select(pfr_player_id, bucket), by = "pfr_player_id") %>%
+  arrange((pfr_player_name))
+```
+
+```{r}
+draft <- draft %>%
+  group_by(bucket, position) %>%
+  mutate(
+    sampling_id = 1:n()
+  )
+```
+
+
+This df (draft) should give me a good way to randomize/figure out who I need to sample/figure out how many games they missed not due to injury. I should be chilling from there. 
+
+
+Trying to write something that tells me which guys I have to look at. ChatGPT recommended checking every guy's game logs if there were less than 30 observations. That's mad tedius, so I'm going to use rookie database to find dudes that didn't play 100% of the games, so that I can just check those. Should cut time considerably
+
+```{r}
+load("RookieDatabase.RData")
+```
+
+Adding buckets to Rookie_database
+```{r}
+Rookie_database <- inner_join(Rookie_database %>% filter(position %in% c("WR", "RB", "QB", "TE")), temp %>% select(gsis_id, bucket) %>% rename(player_id = gsis_id) , by = "player_id")
+```
+
+
+
+2021 nfl shifted to 18 weeks 
+if((season %in% c("2015", "2016", "2017", "2018", "2019", "2020") & games < 16) | (season %in% c("2021", "2022", "2023", "2024", "2025") & games < 17)), FALSE, TRUE)
+Adding full_season, a boolean that tells whether a player played in every game that season
+```{r}
+Rookie_database <- Rookie_database %>%
+  group_by(player_id) %>%
+  mutate(
+    #number of games played in rookie year
+    games = n(),
+    #whether someone played in all the games
+    full_season = if_else((season %in% c("2015", "2016", "2017", "2018", "2019", "2020") & games < 16) | (season %in% c("2021", "2022", "2023", "2024", "2025") & games < 17), FALSE, TRUE)
+  ) 
+  
+```
+
+```{r}
+#all guys who played a full season (whether 16 or 17 games) their rookie year
+#not going to need to check these guys for 0s in my random sampling
+not_to_check <- Rookie_database %>% 
+  filter(full_season == TRUE)
+
+#guys who didn't play a full 16 or 17 games their rookie year. Going to have to check these guys for reasons why.
+ppl_to_check <- anti_join(draft, not_to_check %>% rename(pfr_player_name = full_name), by = "pfr_player_name")
+```
+
+I think I can feel pretty confident in the first two buckets for RBs, WRs that there won't be 0s. I almost don't think it's necessary to check that. For QBs, I almost don't think I'm going to add 0s in either. I think I should just tell ppl if they're not going to play (like Dillon Gabriel week 1), don't put them into your projection. If they're going to start, then put them in. 
+
+So basically, that leaves me checking everything round 2 or later for RBs and WRs, and all TE stuff. 
+
+Should be able to use this list (ppl_to_check) to decide which ppl I even need to check to see if I need to add 0s. Should make this way easier for when I'm doing this on massive scale/have way more ppl who take real zeros, like the round 7 RBs or something. 
+
+To check:
+all buckets of TEs
+2-6 WR
+2-6 RB
+
+RB bucket 2 - review all
+RB bucket 3 - review all
+RB bucket 4 - ?
+RB bucket 5 - ?
+RB bucket 6 - ?
+
+WR bucket 2 - all
+WR bucket 3 - ?
+WR bucket 4 - ?
+WR bucket 5 - ?
+WR bucket 6 - ?
+```{r}
+temp_RB %>%
+  distinct(pfr_player_id, .keep_all = TRUE) %>%
+  group_by(bucket) %>%
+  summarise(
+    count = n()
+  )
+```
+
+#Code to generate which players to sample
+Need to change these from not all being 20. I should really just compute the standard deviation from a small set of each sample for how many games they missed bc the formula ChatGPT uses for a good sample size for each bucket is actually depending on sd for games missed. Think the sd might honestly be the highest in like round 4, bc some dudes are gonna play every game and some are gonna be cooked. This is something I should do to get a better estimate of how many I should sample in total. 
+```{r}
+sample_rb3 <- sample(1:30, 20, replace = FALSE)
+sample_rb4 <- sample(1:48, 20, replace = FALSE)
+sample_rb5 <- sample(1:40, 20, replace = FALSE)
+sample_rb6 <- sample(1:75, 20, replace = FALSE)
+
+sample_rb3 <- sample(1:30, 20, replace = FALSE)
+```
+
+```{r}
+draft %>%
+  filter(position == "RB" & bucket == 4) %>%
+  filter(pfr_player_id %in% ppl_to_check$pfr_player_id) %>%
+  view()
+```
+
+RB bucket 3 done
+
+```{r}
+sd(c(0, 1, 3, 0, 5))
+mean(c(0, 1, 3, 0, 5))
+```
+
+```{r}
+((1.96 * sd(c(0, 1, 3, 0, 5)))/.75)^2
+```
+
