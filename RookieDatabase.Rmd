@@ -5,6 +5,7 @@ date: "2025-02-11"
 output: html_document
 ---
 
+Updated as of 6/30
 ```{r, message=FALSE}
 library(tidyverse)
 library(dplyr)
@@ -77,6 +78,101 @@ Rookie_database <- Rookie_database %>%
   rename(player_id = gsis_id)
 ```
 
+#Adding buckets to df
+```{r}
+temp1 <- Rookie_database %>%
+  filter(position == "WR") %>% 
+  mutate(
+    bucket = 
+      case_when(
+        pick < 15 ~ 1,
+        pick < 33 & pick >= 16 ~ 2,
+        pick < 66 & pick >= 33 ~ 3,
+        pick < 100 & pick >= 66 ~ 4,
+        pick < 170 & pick >= 100 ~ 5,
+        TRUE ~ 6
+      )
+  )
+```
+
+
+```{r}
+temp2 <- Rookie_database %>%
+  filter(position == "RB") %>% 
+  mutate(
+    bucket = 
+      case_when(
+        pick < 33 ~ 1,
+        pick < 66 & pick >= 33 ~ 2,
+        pick < 100 & pick >= 66 ~ 3,
+        pick < 180 & pick >= 100 ~ 4,
+        TRUE ~ 5
+      )
+  )
+```
+
+
+```{r}
+temp3 <- Rookie_database %>%
+  filter(position == "QB") %>% 
+  mutate(
+    bucket = 
+      case_when(
+        pick < 15 ~ 1,
+        pick < 65 & pick >= 11 ~ 2,
+        pick < 120 & pick >= 66 ~ 3,
+        pick < 180 & pick >= 120 ~ 4,
+        pick < 180 & pick >= 150 ~ 5,
+        TRUE ~ 6
+      )
+  )
+```
+
+
+```{r}
+temp4 <- Rookie_database %>%
+  filter(position == "TE") %>% 
+  mutate(
+    bucket = 
+      case_when(
+        pick < 33 ~ 1,
+        pick < 68 & pick >= 33 ~ 3,
+        pick < 95 & pick >= 68 ~ 4,
+        pick < 120 & pick >= 120 ~ 5, 
+        pick < 155 & pick >= 120 ~ 6,
+        pick < 200 & pick >= 155 ~ 7,
+        TRUE ~ 8
+      )
+  )
+```
+
+```{r}
+temp <- rbind(temp1, temp2, temp3, temp4)
+```
+
+```{r}
+Rookie_database <- left_join(Rookie_database, temp %>% select(player_id, week, bucket), by = c("week", "player_id")) %>%
+  filter(!is.na(full_name))
+```
+
+#Data cleaning
+```{r}
+Rookie_database <- Rookie_database %>%
+  group_by(position, bucket) %>%
+  mutate(
+    deviation = sd(total_fantasy_points, na.rm = TRUE),
+    mean = mean(total_fantasy_points, na.rm = TRUE)
+  ) %>%
+  ungroup()
+```
+
+```{r}
+Rookie_database <- Rookie_database %>%
+  filter((total_fantasy_points <= mean + 3 * deviation & total_fantasy_points >= mean - 3 * deviation)) %>%
+  filter(total_fantasy_points >= 0) %>%
+  #added this line so there'd be no double counting once next season starts
+  filter(season != "2025")
+```
 
 ```{r}
 save(Rookie_database,
