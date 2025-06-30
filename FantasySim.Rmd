@@ -8,15 +8,12 @@ output: html_document
 
 To do list (3/18)
 1. Might need to rethink how the optimize and generate functions are done. What if I passed two teams into the generate one? and then the add function was something like add_player(score, position, team) ? I think that might be the best way to do it so I only have to run the optimize and generate functions once 
-2. 4/12 Test log sim again, both for rookies and for all. 
-3. 4/12 filter out before week 12 in Rookie database when I'm doing my bucket calculations. Why am I using jamar chase's playoff scores? with late rookie breakout/stuff like that, I think it might be wise to just use the weeks that I'm looking at projecting for an individual player. 
+3. 4/12 filter out before week 12 in Rookie database when I'm doing my bucket calculations? Why am I using jamar chase's playoff scores? with late rookie breakout/stuff like that, I think it might be wise to just use the weeks that I'm looking at projecting for an individual player. 
 
 Next goals 5/12
-1. Making buckets more general. Don't group stupidly, but don't wanna be overconfident in myself in being able to distinguish if a 4th round RB is really that much better than a 5th, for example
-2. Find a good way (either manually or through estimation for some of the buckets) to estimate how many games each player in the bucket missed when they were healthy. Want to add these as 0s so that the projection for each bucket comes in at a more realistic number. (healthy scratches, need to add 0s for that. Think the move is to estimate the ones who played games, then separately estimate the ppl in the bucket who didn't see the field at all. Probably will be able to count those easier, lot of 16s and 17s)
+1. Find a good way (either manually or through estimation for some of the buckets) to estimate how many games each player in the bucket missed when they were healthy. Want to add these as 0s so that the projection for each bucket comes in at a more realistic number. (healthy scratches, need to add 0s for that. Think the move is to estimate the ones who played games, then separately estimate the ppl in the bucket who didn't see the field at all. Probably will be able to count those easier, lot of 16s and 17s)
   i. Going to want to do this in Google sheets, just save it as a CSV when I'm done and then import it
 3. Find out how many players were drafted in these ranges that just straight up never appeared in a game. Want to take those guys, add 0s into the df again to make my rookie projection not suffer from selection bias as much
-  i. Probably going to need to use the same estimation techniques for these too. Sample 10 players in the bucket of never         appeared in the game, use that to estimate how many 0s to add for each guy (don't wanna just add 17 for each one)
 ```{r, message=FALSE}
 library(tidyverse)
 library(dplyr)
@@ -57,103 +54,7 @@ Sleeper <- inner_join(Sleeper, Rookie_database, by = c("full_name", "week"))
 Going to want to join this df with my projections, keeping only the ones that are in Sleeper and projections 
 
 #adding bucket to/pick to ff
-I should move this to the .Rmd where I actually make this at some point, not a super big problem rn but def should do it in the future.
-
 Started Google sheet with temp1
-5/15
-Definitely going to need to random sample. This isn't worth doing all by hand to figure out exact numbers, I'm ok if there's flaws, but there needs to be zeros added. I think the buckets under 10-15 I need to do all of them (shouldn't be as bad). Everyone else, random sample 10-15, throw them in the google doc, use that to estimate how many each player would miss. Still going to have to figure out a way to estimate how many ppl just straight up never played in any games that were in the bucket too. Maybe I do that first? find all the names that should be in the buckets (like 6th round running backs), then randomly sample. I'll get some that miss 0, I'll get some that miss 16 even tho they were healthy, should even out if I sample enough, should be easier. I don't know what the right way to do that is tbh, but I think independent random sampling points to throwing them all in the same pile and picking from there. 
-```{r}
-temp1 <- Rookie_database %>%
-  filter(position == "WR") %>% 
-  mutate(
-    bucket = 
-      case_when(
-        pick < 15 ~ 1,
-        pick < 33 & pick >= 16 ~ 2,
-        pick < 66 & pick >= 33 ~ 3,
-        pick < 100 & pick >= 66 ~ 4,
-        pick < 170 & pick >= 100 ~ 5,
-        TRUE ~ 6
-      )
-  )
-```
-
-
-```{r}
-temp2 <- Rookie_database %>%
-  filter(position == "RB") %>% 
-  mutate(
-    bucket = 
-      case_when(
-        pick < 33 ~ 1,
-        pick < 66 & pick >= 33 ~ 2,
-        pick < 100 & pick >= 66 ~ 3,
-        pick < 180 & pick >= 100 ~ 4,
-        TRUE ~ 5
-      )
-  )
-```
-
-
-
-
-```{r}
-temp3 <- Rookie_database %>%
-  filter(position == "QB") %>% 
-  mutate(
-    bucket = 
-      case_when(
-        pick < 15 ~ 1,
-        pick < 65 & pick >= 11 ~ 2,
-        pick < 120 & pick >= 66 ~ 3,
-        pick < 180 & pick >= 120 ~ 4,
-        pick < 180 & pick >= 150 ~ 5,
-        TRUE ~ 6
-      )
-  )
-```
-
-
-```{r}
-temp4 <- Rookie_database %>%
-  filter(position == "TE") %>% 
-  mutate(
-    bucket = 
-      case_when(
-        pick < 33 ~ 1,
-        pick < 68 & pick >= 33 ~ 3,
-        pick < 95 & pick >= 68 ~ 4,
-        pick < 120 & pick >= 120 ~ 5, 
-        pick < 155 & pick >= 120 ~ 6,
-        pick < 200 & pick >= 155 ~ 7,
-        TRUE ~ 8
-      )
-  )
-```
-
-```{r}
-temp1 %>%
-  distinct(player_id, .keep_all = TRUE) %>%
-  group_by(bucket) %>%
-  summarise(
-    count = n()
-  )
-```
-
-```{r}
-temp <- rbind(temp1, temp2, temp3, temp4)
-```
-
-Have no position or name on a couple of players (40 out of 6085 observations). Probably just gonna toss them out of the sample. 
-```{r}
-anti_join(Rookie_database, temp, by = c("week", "player_id"))
-```
-
-
-```{r}
-Rookie_database <- left_join(Rookie_database, temp %>% select(player_id, week, bucket), by = c("week", "player_id"))
-```
-
 ```{r}
 players_in_bucket <- Rookie_database %>% 
   distinct(player_id, .keep_all = TRUE) %>%
@@ -166,32 +67,7 @@ games_in_bucket <- Rookie_database %>%
 ```
 
 
-Old buckets for Rookie_database 
-```{r}
-# Rookie_database <- Rookie_database %>% 
-#   mutate(
-#     bucket = 
-#       case_when(
-#         pick < 11 ~ 1,
-#         pick < 22 & pick >= 11 ~ 2,
-#         pick < 33 & pick >= 22 ~ 3,
-#         pick < 44 & pick >= 33 ~ 4,
-#         pick < 55 & pick >= 44 ~ 5,
-#         pick < 66 & pick >= 55 ~ 6,
-#         pick < 77 & pick >= 66 ~ 7,
-#         pick < 88 & pick >= 77 ~ 8,
-#         pick < 100 & pick >= 88 ~ 9,
-#         pick < 120 & pick >= 100 ~ 10,
-#         pick < 140 & pick >= 120 ~ 11,
-#         pick < 160 & pick >= 140 ~ 12,
-#         pick < 180 & pick >= 160 ~ 13,
-#         pick < 220 & pick >= 180 ~ 14,
-#         TRUE ~ 15
-#       )
-#   )
-```
-
-#data cleaning
+#data cleaning - moving to AllPlayersDatabase.Rmd to clean up file
 ```{r}
 ff <- All_Players_Database %>% 
   filter(season == "2023" | season == "2022" | season == "2024") %>%
@@ -217,34 +93,17 @@ ff <- ff %>%
   filter((is.rookie == FALSE & total_fantasy_points <= mean + 3 * deviation & total_fantasy_points >= mean - 3 * deviation) | is.rookie == TRUE)
 ```
 
-Rookie data cleaning
-```{r}
-Rookie_database <- Rookie_database %>%
-  group_by(position, bucket) %>%
-  mutate(
-    deviation = sd(total_fantasy_points, na.rm = TRUE),
-    mean = mean(total_fantasy_points, na.rm = TRUE)
-  ) %>%
-  ungroup()
-```
-
-```{r}
-Rookie_database <- Rookie_database %>%
-  filter((total_fantasy_points <= mean + 3 * deviation & total_fantasy_points >= mean - 3 * deviation)) %>%
-  filter(total_fantasy_points >= 0) %>%
-  #added this line so there'd be no double counting once next season starts
-  filter(season != "2025")
-```
 
 
 
+#Adding round, pick, bucket to ff
 ```{r}
 temp <- Rookie_database %>%
   distinct(player_id, .keep_all = TRUE) %>%
   select(player_id, round, pick, bucket)
 ```
 
-I think this should be what I want... ff with round, pick, bucket in it. 
+
 ```{r}
 ff <- left_join(ff, temp, by = "player_id")
 ```
@@ -254,116 +113,25 @@ Jared's team Week 1
 Order: 
 1. Joe Burrow 2. Bijan Robinson 3. Chase Brown 4. Mike Evans 5. De'Von Achane 6. Rhamondre Stevenson 7. Alec Pierce 8. Tucker Kraft 9. Breece Hall 10. Geno Smith 11. Ezekiel Elliot 12. Demarcus Robinson 13. Adam Thielen 14. Michael Pittman, 15. Keenan Allen 16. Andrei Iosivas 17. Johnny Mundt 18. Tre Tucker 19. Raheem Mostert 20. Gerald Everett 21. Jake Browning 22. Javon Baker 23. TJ Hockenson 24. Charlie Jones 25. Baker Mayfield 
 
+#sample teams
 00-0035100
 This is deleting Jake Browning since Joe Burrow was starting week 1
 ```{r}
 Jared_alt <- c("00-0036442", "00-0038542", "00-0038597", "00-0031408", "00-0039040", "00-0036875", "00-0037664", "00-0038996", "00-0038120", "00-0030565", "00-0033045", "00-0032775", "00-0030035", "00-0036252", "00-0030279", "00-0038619", "00-0033246", "00-0038563", "00-0031687", "00-0033895", "00-0039853", "00-0035229", "00-0038576", "00-0034855")
 ```
 
-
-#Log sim updated structure (2/25)
-Didn't even test this, looks fairly close, I got tired and turned in for the night. 
-It ran, but I need to test the results and see if they're booty before I make this a function. 
+My team, Caleb Williams as proxy for Cam Ward (post trade), leaving out rookies
+Love, Hurts, Williams, JSN, DeVonta, Charbonnet, BTJ, Reed, Shaheed, Doubs, Coker
 ```{r}
-log_sim <- function(ff, fantasy_team) {
-#stores column names with player's ids
-player_ids_vector_2 <- c()
-all_player_scores_list_2 <- list()
-  ids_2 <- ff %>%
-    filter(player_id %in% fantasy_team) %>%
-    distinct(player_id) %>%
-    pull(player_id)
-for(i in 1:length(ids_2)){
-  #df with only the one player's stats
-  player_2 <- ff %>%
-    filter(player_id == ids_2[[i]])
-    
-  
-  #quantile for said one player
-  #Need to transform at this step
-  player_2$log_fp <- log1p(player_2$total_fantasy_points)
-  player_quantile_2 <- player_2$log_fp %>%
-    #might need to generalize this b, specifically how many groups, too
-    quantile(probs = seq(0,1,.25))
-  
-    individual_scores_2 <- numeric(12000)
-  
-      for(j in 1:12000){
-        rng_2 <- runif(1, min = 0, max = 1)
-        if(rng_2 < .25){
-          lower_2 <- unname(player_quantile_2[1])
-          upper_2 <- unname(player_quantile_2[2])
-          lower_percent_2 <- 0
-          higher_percent_2 <- .25
-        } else if(rng_2 >= .25 & rng_2 < .5){
-          lower_2 <- unname(player_quantile_2[2])
-          upper_2 <- unname(player_quantile_2[3])
-          lower_percent_2 <- .25
-          higher_percent_2 <- .5
-        } else if(rng_2 >=.5 & rng_2 < .75){
-          lower_2 <- unname(player_quantile_2[3])
-          upper_2 <- unname(player_quantile_2[4])
-          lower_percent_2 <- .5
-          higher_percent_2 <- .75
-        } else{
-          lower_2 <- unname(player_quantile_2[4])
-          upper_2 <- unname(player_quantile_2[5])
-          lower_percent_2 <- .75
-          higher_percent_2 <- 1
-        }
-        #include this in case upper and lower quantile equal each other (it was always gonna return 0)
-        if(upper_2 == lower_2){
-          modeled_points_2 <- expm1(lower)
-        } else {
-          interpolated_log <- lower_2 + (rng_2 - lower_percent_2) * (upper_2 - lower_2)/(higher_percent_2-lower_percent_2)
-        #transforming back to fantasy points
-        modeled_points_2 <- expm1(interpolated_log)
-        }
-        individual_scores_2[j] <- modeled_points_2
-      }
-      all_player_scores_list_2[[i]] <- individual_scores_2
-      player_ids_vector_2 <- c(player_ids_vector_2, ids_2[[i]])
-}
-
-all_player_scores_2 <- as.data.frame(do.call(cbind, all_player_scores_list_2))
-
-colnames(all_player_scores_2) <- player_ids_vector_2
-
-
-
-all_player_scores_2 <- cbind(observation = 1:12000, all_player_scores_2)
-
-long_scores_2_df <- all_player_scores_2 %>%
-  pivot_longer(cols = -observation, names_to = "player_id", values_to = "score")
-
-#adding position, name to the df (basically so I can check my work better)
-long_scores_2_df <- long_scores_2_df %>%
-  left_join(ff %>%
-              distinct(player_id, .keep_all = TRUE) %>%
-              select(player_id, full_name, position), by = "player_id")
-
-return(long_scores_2_df)
-}
+post_trade <- c("00-0036264", "00-0036389", "00-0039918", "00-0038543", "00-0036912", "00-0039165", "00-0039893", "00-0039146", "00-0037545", "00-0037816", "00-0039491", "00-0034270")
 ```
 
-
+Leaving out rookies
+Love, hurts, daniels, JSN, DeVonta, Charbonnet, Shaheed, Doubs, Coker
 ```{r}
-log_averages <- long_scores_2_df %>%
-  group_by(player_id, full_name) %>%
-  summarize(
-    log_avg = mean(score)
-  ) %>%
-  ungroup()
+pre_trade <- c("00-0036264", "00-0036389", "00-0039910", "00-0038543", "00-0036912", "00-0039165", "00-0037545", "00-0037816", "00-0039491", "00-0034270")
 ```
 
-```{r}
-linear_averages <- long_scores_df %>%
-  group_by(player_id) %>%
-  summarize(
-    lin_avg = mean(score)
-  ) %>%
-  ungroup()
-```
 
 #Efficient Linear_sim() 4/18
 ```{r}
@@ -400,8 +168,9 @@ full_names <- rep(names, each = 12000)
 
 observations <- 1:12000
 
-full_observations <- rep(observations, each = length(fantasy_team))
-
+#just changed these lines out... think this should be correct now.
+#full_observations <- rep(observations, each = length(fantasy_team))
+full_observations <- rep(observations, times = length(fantasy_team))
 
 for(i in 1:length(ids)){
   #vector containing generated scores for one individual
@@ -499,7 +268,9 @@ full_names <- rep(names, each = 12000)
 
 observations <- 1:12000
 
-full_observations <- rep(observations, each = length(fantasy_team))
+#just changed these lines out... think this should be correct now.
+#full_observations <- rep(observations, each = length(fantasy_team))
+full_observations <- rep(observations, times = length(fantasy_team))
 
 
 for(i in 1:length(ids)){
@@ -561,6 +332,86 @@ long_scores_df <- data.frame(
 return(long_scores_df)
 }
 ```
+
+#optimize function
+My boy Chet Gupta clutched tf up here (wish I put this up by Linear_sim... might wanna do that in the future tbh.)
+```{r}
+optimize_team <- function(long_scores_df) {
+optimized_team <- long_scores_df %>%
+  arrange(observation, desc(score)) %>%
+  group_by(observation) %>%
+  mutate(
+    qb_rank = cumsum(position == "QB"),
+    rb_rank = cumsum(position == "RB"),
+    wr_rank = cumsum(position == "WR"),
+    te_rank = cumsum(position == "TE"),
+  ) %>%
+  filter(
+    (position == "QB" & qb_rank <= 1) |
+    (position == "RB" & rb_rank <= 2) |
+    (position == "WR" & wr_rank <= 2) |
+    (position == "TE" & te_rank <= 1)
+  ) %>%
+  ungroup()
+
+leftovers <- long_scores_df %>%
+  anti_join(optimized_team, by = c("observation", "player_id"))
+
+flex_players <- leftovers %>%
+  filter(position %in% c("RB", "WR", "TE")) %>%
+  arrange(observation, desc(score)) %>%
+  group_by(observation) %>%
+  slice_head(n = 2) %>%
+  ungroup()
+
+second_leftovers <- anti_join(long_scores_df, optimized_team, by = c("observation", "player_id"))
+
+second_leftovers <- anti_join(second_leftovers, flex_players, by = c("observation", "player_id"))
+
+superflexes <- second_leftovers %>%
+  arrange(observation, desc(score)) %>% 
+  group_by(observation) %>%
+  slice_head(n=1) %>%
+  ungroup()
+
+optimized_team <- rbind(optimized_team %>% select(observation, player_id, score, full_name, position), flex_players, superflexes) %>%
+  arrange(observation)
+
+return(optimized_team)
+}
+```
+
+#My team/post trade analysis
+```{r}
+pre_sim <- linear_sim(ff, pre_trade)
+post_sim <- linear_sim(ff, post_trade)
+```
+
+```{r}
+#Jared_optimal <- optimize_team(Jared_sim)
+pre_optimal <- optimize_team(pre_sim)
+post_optimal <- optimize_team(post_sim)
+```
+
+Code just takes the average score across all weeks
+```{r}
+pre_optimal %>%
+  group_by(observation) %>%
+  summarise(
+    averages = sum(score)
+  ) %>% pull(averages) %>%
+  mean()
+```
+
+```{r}
+post_optimal %>%
+  group_by(observation) %>%
+  summarise(
+    averages = sum(score)
+  ) %>% pull(averages) %>%
+  mean()
+```
+
 
 #Rookie quantile work
 ```{r}
@@ -1023,63 +874,6 @@ Think this is closer to being able to work with now... Still gotta think about w
 I wanna pull the position and bucket for each player, then go to all rookie database, filter the ppl in the same position and bucket, and then combine that with Malik Nabers' scores. Then use wtd.quantile to make a rookie projection. Too tired to think straight about this rn. 
 
 
-
-#optimize function
-My boy Chet Gupta clutched tf up here
-```{r}
-optimize_team <- function(long_scores_df) {
-optimized_team <- long_scores_df %>%
-  arrange(observation, desc(score)) %>%
-  group_by(observation) %>%
-  mutate(
-    qb_rank = cumsum(position == "QB"),
-    rb_rank = cumsum(position == "RB"),
-    wr_rank = cumsum(position == "WR"),
-    te_rank = cumsum(position == "TE"),
-  ) %>%
-  filter(
-    (position == "QB" & qb_rank <= 1) |
-    (position == "RB" & rb_rank <= 2) |
-    (position == "WR" & wr_rank <= 2) |
-    (position == "TE" & te_rank <= 1)
-  ) %>%
-  ungroup()
-
-leftovers <- long_scores_df %>%
-  anti_join(optimized_team, by = c("observation", "player_id"))
-
-flex_players <- leftovers %>%
-  filter(position %in% c("RB", "WR", "TE")) %>%
-  arrange(observation, desc(score)) %>%
-  group_by(observation) %>%
-  slice_head(n = 2) %>%
-  ungroup()
-
-second_leftovers <- anti_join(long_scores_df, optimized_team, by = c("observation", "player_id"))
-
-second_leftovers <- anti_join(second_leftovers, flex_players, by = c("observation", "player_id"))
-
-superflexes <- second_leftovers %>%
-  arrange(observation, desc(score)) %>% 
-  group_by(observation) %>%
-  slice_head(n=1) %>%
-  ungroup()
-
-optimized_team <- rbind(optimized_team %>% select(observation, player_id, score, full_name, position), flex_players, superflexes) %>%
-  arrange(observation)
-
-return(optimized_team)
-}
-```
-
-```{r}
-Jared_sim <- linear_sim(ff, Jared_week1)
-```
-
-```{r}
-Jared_optimal <- optimize_team(Jared_sim)
-```
-
 #compare tab
 I think when I actually put this on my app, I should just truncate the scores. I don't want it to be so obvious that it changes all the time, and I don't think it would change the experience for anyone. Could pretty easily do the same thing for the max and min projection in the box under the graph too. 
 ```{r}
@@ -1131,17 +925,13 @@ Then want to try this again for the rookies.
 
 
 Next steps for my project:
-0. I think I'm gonna need to fix way outlier numbers. Or even just the upper quadrant for guys. Like Josh Allen's projected ppg is just too high. I think it's just going to be tough for ppl with mega outlier scores, but idk how to solve for this. First thought is fitting it to a x^2 function instead of just a line, but idk how to do that off the top of my head. 
-  The Josh Allen projection isn't as bad as I thought. This data is factoring out Week 18 where he took one snap to keep
-  the snaps streak, so his ppg is pretty close to the projection. I'm going to test the log based way too to see if 
-  that's better, otherwise I'm fine with the linear interpolation. 
-1. make this work for 25 person chunks of ff (going to run into problems when I want to generate two teams... think I'm
-just going to make another function and then put all the variable names as 2 lol)
-2. figure out how to make this work so that if a user passes the name of a player, I can pull their ids into the "ids" vector that currently contains all bills players
-3. Big thing is going to be figuring out how to optimize the scoring to match best ball scoring. The biggest problem I foresee is needing to have each player's positions and everything like that saved too.
-  a. One thought I had earlier about this was going through and optimizing each lineup one at a time, saving the total scores to a team1 and team2 vector, and then at the end making that win prob and projected points (I think the win prob and projected points will be the easiest part of the project tbh)
-4. making the database for rookies
-5. making this a shiny app so me and leaguemates can interact with it
+6/30
+1. Finish data entry for rookie non stat recording weeks
+2. Need to finish rookie quantile projection. Think because of the lack of data, acceptable to eye ball best relationship, definitely wanna use some log slowly increasing function
+3. Make linear_sim(), optimize_team() work for 2 teams at once (if they put nothing for team two, pass along empty string and make it a 100% win prob)
+4. Make win prob/compare! shouldn't be too bad, especially once linear sim and optimize functions work for both teams
+5. Make the shiny app! (How am I gonna do rookies? Wait till week 2?)
+6. Make a manual lever to pull for when someone's role dramatically changes, like Raheem Mostert from 2023 to 2024 (points per touch * # of extra touches + projection)
 
 Biggest problems i foresee with my projection:
 1. handcuff players 
@@ -1162,3 +952,7 @@ Biggest problems i foresee with my projection:
 When I'm telling everyone how to use this, need to make sure that they don't add a bunch of ppl who are hurt/backup QBs. If they're not gonna play, just don't add them. I don't have time to update them all every week, but I'll update handcuff running backs and stuff like that where I can
 
 Going to need a remove player from list function, and also a clear_all function for the shiny app.
+
+
+Linear sim only gonna work for full team... observation numbers get messed up otherwise. 3 observations for each player when I used the 
+
