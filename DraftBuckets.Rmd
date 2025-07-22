@@ -15,6 +15,12 @@ library(stats)
 
 The whole goal of this is to randomly sample each position and bucket to see on average how many games these players were not injured and scored 0 fantasy points. I'm going to have to do manual work, but using some statistical techniques can at least limit that and give an approximation for how many 0s I need to be entering. The point of this is to make my projections for rookies in my other model by avoiding selection bias. Before, my dataset only included guys who played snaps/received targets or things like that, meaning all the bad ones who never made the roster or who were only special teamers were filtered out. This way, I'm giving more accurate projections for what each of these players are. 
 
+Probably added a couple too many 0s (hard to tell from football reference if a guy is injured or if he's ), but I think it's much closer than it was.
+
+```{r}
+drafted_rookies <- read.csv("Rookies - Sheet1.csv")
+```
+
 
 ```{r, message=FALSE}
 draft <- load_draft_picks(seasons = TRUE, file_type = getOption("nflreadr.prefer", default = "rds")) %>%
@@ -29,7 +35,7 @@ temp_WR <- draft %>%
   mutate(
     bucket = 
       case_when(
-        pick < 15 ~ 1,
+        pick < 16 ~ 1,
         pick < 33 & pick >= 16 ~ 2,
         pick < 66 & pick >= 33 ~ 3,
         pick < 100 & pick >= 66 ~ 4,
@@ -122,9 +128,37 @@ Trying to write something that tells me which guys I have to look at. ChatGPT re
 load("RookieDatabase.RData")
 ```
 
+```{r}
+Rookie_database <- Rookie_database %>%
+  mutate(
+    total_fantasy_points = if_else(position == "TE", total_fantasy_points + 0.5 * receptions, total_fantasy_points)
+  )
+```
+
+7/3 **IMPORTANT**
+This df is rookies who were drafted in rookie drafts. Trying to get a feel for if my bucket size is big enough to get a good sample to project each position and bucket. Think this is a more genuine way to go about it than saying all RBs drafted in round 7 bc a lot of those guys were drafted to play special teams. 
+
+Lowkey way happier with this than what I had. Do think I need to rearrange the buckets though. TE and QB buckets need to get shrunk tbh. 
+```{r}
+Rookie_database %>%
+  filter(full_name %in% drafted_rookies$Name) %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  group_by(bucket, position) %>%
+  summarise(
+    number = n()
+  )
+```
+
+BUCKET REDISTRIBUTION.
+TE bucket 2 is gone, combine with TE bucket 3. QB bucket 3 is gone, combine with QB4, 5 and 6.
+TE bucket 5-8 needs to get collapsed down into one.
+WR buckets look good tbh.
+RB buckets 4 and 5 should probably be redistributed, 6 needs to be combined with 5. 
+
+
 Adding buckets to Rookie_database
 ```{r}
-Rookie_database <- inner_join(Rookie_database %>% filter(position %in% c("WR", "RB", "QB", "TE")), temp %>% select(gsis_id, bucket) %>% rename(player_id = gsis_id) , by = "player_id")
+# Rookie_database <- inner_join(Rookie_database %>% filter(position %in% c("WR", "RB", "QB", "TE")), temp %>% select(gsis_id, bucket) %>% rename(player_id = gsis_id) , by = "player_id")
 ```
 
 
@@ -162,7 +196,7 @@ Should be able to use this list (ppl_to_check) to decide which ppl I even need t
 
 To check:
 all buckets of TEs
-2-6 WR
+3-6 WR (bucket 2 is back of the first round, think that should be fine or at least not worth the effort)
 2-6 RB
 
 RB bucket 2 - review all
@@ -185,32 +219,33 @@ temp_RB %>%
   )
 ```
 
-#Code to generate which players to sample
-Need to change these from not all being 20. I should really just compute the standard deviation from a small set of each sample for how many games they missed bc the formula ChatGPT uses for a good sample size for each bucket is actually depending on sd for games missed. Think the sd might honestly be the highest in like round 4, bc some dudes are gonna play every game and some are gonna be cooked. This is something I should do to get a better estimate of how many I should sample in total. 
-```{r}
-sample_rb3 <- sample(1:30, 20, replace = FALSE)
-sample_rb4 <- sample(1:48, 20, replace = FALSE)
-sample_rb5 <- sample(1:40, 20, replace = FALSE)
-sample_rb6 <- sample(1:75, 20, replace = FALSE)
 
-sample_rb3 <- sample(1:30, 20, replace = FALSE)
-```
 
+#df to view for players to check
 ```{r}
-draft %>%
-  filter(position == "RB" & bucket == 4) %>%
-  filter(pfr_player_id %in% ppl_to_check$pfr_player_id) %>%
+Rookie_database %>%
+  #checking for drafted in rookie drafts
+  filter(full_name %in% drafted_rookies$Name) %>%
+  distinct(player_id, .keep_all = TRUE) %>%
+  #checking by position and bucket
+  filter(position == "TE" & bucket == 7) %>%
+  #checking for didn't play the full season
+  filter(player_id %in% ppl_to_check$gsis_id) %>%
   view()
 ```
 
-RB bucket 3 done
+Stopped at Hunter Long
 
-```{r}
-sd(c(0, 1, 3, 0, 5))
-mean(c(0, 1, 3, 0, 5))
-```
+For this df I'm creating, looked at way too many RBs, including dudes who were not getting drafted in rookie drafts. Going to have to filter out those names, kind of like I did earlier in this workbook, like at line 138
+It'll have to be something like:
+google_sheet %>%
+filter(full_name %in% drafted_rookies$full_name)
+just to get rid of all of that extra data
 
-```{r}
-((1.96 * sd(c(0, 1, 3, 0, 5)))/.75)^2
-```
+Need to add a check to make sure there aren't ppl like Brian Thomas Jr., who has a suffix to the end of their name. Just need to make sure some ppl don't fall through the cracks. could probably code that or manually check, but gotta do something.
 
+Probably just count that the number of distinct players in merged data I've made and in adp data i put in here is the same. Then, if it's different, use anti join to see which names i have to adjust.
+
+Found this on the last guy, absolutely tragic, but football reference has injury reports by team by year. Way better than doing what I did, would've saved so much time
+
+Done with manually finding data though

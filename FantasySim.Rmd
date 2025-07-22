@@ -8,7 +8,11 @@ output: html_document
 
 To do list (3/18)
 1. Might need to rethink how the optimize and generate functions are done. What if I passed two teams into the generate one? and then the add function was something like add_player(score, position, team) ? I think that might be the best way to do it so I only have to run the optimize and generate functions once 
-3. 4/12 filter out before week 12 in Rookie database when I'm doing my bucket calculations? Why am I using jamar chase's playoff scores? with late rookie breakout/stuff like that, I think it might be wise to just use the weeks that I'm looking at projecting for an individual player. 
+2. Filter out rookie's who aren't in ADP Data (7/21)
+3. Test both different piecewise functions for rookie data (7/21)
+4. Before I ever post this anywhere, I need to clean up my .Rmd. Can't be posting this if the backend has all my scratch work in it. 
+
+One thing I'm going to need to do is add games played this season column too. That'll be to key off for rookies.
 
 Next goals 5/12
 1. Find a good way (either manually or through estimation for some of the buckets) to estimate how many games each player in the bucket missed when they were healthy. Want to add these as 0s so that the projection for each bucket comes in at a more realistic number. (healthy scratches, need to add 0s for that. Think the move is to estimate the ones who played games, then separately estimate the ppl in the bucket who didn't see the field at all. Probably will be able to count those easier, lot of 16s and 17s)
@@ -23,11 +27,23 @@ library(nflfastR)
 library(nflreadr)
 library(stats)
 library(Hmisc)
+library(readr)
 ```
 
 ```{r, message=FALSE}
 Sleeper <- read_csv("Rookie_Sleeper_Projections.csv")
 ```
+
+```{r}
+#this is the rookies who were drafted in the first 3 rounds of rookie drafts from 2015-2023
+#source - https://fantasyfootballcalculator.com/adp/rookie/12-team/all/2024
+#added our own rookie draft for 2024 since it didn't have that data
+ADP_data <- read_csv("Rookie_adp_data - Rookie_adp_data.csv") %>%
+  rename(full_name = Name)
+```
+
+
+
 
 ```{r}
 Sleeper <- Sleeper %>%
@@ -41,6 +57,36 @@ load("RookieDatabase.RData")
 Rookie_database <- Rookie_database %>% arrange(full_name)
 ```
 
+
+
+
+#Adding TEP to All Players Database and Rookies Database
+```{r}
+All_Players_Database <- All_Players_Database %>%
+  mutate(
+    total_fantasy_points = if_else(position == "TE", total_fantasy_points + 0.5 * receptions, total_fantasy_points)
+  )
+```
+
+```{r}
+Rookie_database <- Rookie_database %>%
+  mutate(
+    total_fantasy_points = if_else(position == "TE", total_fantasy_points + 0.5 * receptions, total_fantasy_points)
+  )
+```
+
+#Adding GP to all players database
+```{r}
+All_Players_Database <- All_Players_Database %>%
+  arrange(season, week) %>%
+  group_by(season, player_id) %>%
+  mutate(
+    GP = row_number()
+  ) %>%
+  ungroup()
+```
+
+
 ```{r}
 Sleeper <- Sleeper %>%
   select(full_name, Sleeper_proj, week) %>%
@@ -53,8 +99,53 @@ Sleeper <- inner_join(Sleeper, Rookie_database, by = c("full_name", "week"))
 ```
 Going to want to join this df with my projections, keeping only the ones that are in Sleeper and projections 
 
+
+
+
+#Data cleaning
+Added this back to this .Rmd because I wanted to add TEP here so if I ever did anything in normal PPR, I have that data ready to go in Rookie_database
+```{r}
+Rookie_database <- Rookie_database %>%
+  group_by(position, bucket) %>%
+  mutate(
+    deviation = sd(total_fantasy_points, na.rm = TRUE),
+    mean = mean(total_fantasy_points, na.rm = TRUE)
+  ) %>%
+  ungroup()
+```
+
+```{r}
+Rookie_database <- Rookie_database %>%
+  filter((total_fantasy_points <= mean + 3 * deviation & total_fantasy_points >= mean - 3 * deviation)) %>%
+  filter(total_fantasy_points >= 0) %>%
+  #added this line so there'd be no double counting once next season starts
+  filter(season != "2025")
+```
+
+#filtering to just rookies picked in rookie drafts
+```{r}
+test <- Rookie_database %>%
+  filter(full_name %in% ADP_data$Name) %>%
+  distinct(player_id, .keep_all = TRUE)
+```
+
+This returns names that didn't match up. usually spelling/mismatching errors on my part, going through and changing names in ADP_data so that I can resave and then refilter.
+
+Players hurt their whole rookie year, like JJ McCarthy, won't appear in data (which makes sense)
+David Cobb not in any dataset from nfl gsis, no idea why
+Ty Montgomery not in dataset, don't know why
+Malcolm Mitchell not there, should be (fixed all players to include him, just need to resave it)
+I think a couple guys in my is.rookie are getting messed up. Mitchell's was off his rookie year. 
+Left off at Demarcus Robinson
+```{r}
+test2 <- ADP_data %>% 
+  anti_join(Rookie_database, by = "full_name")
+```
+
+
+RIGHT HERE, I SHOULD JUST FILTER OUT ALL ROOKIES WHO WEREN'T IN THE ADP DATA THAT I GOT FROM ONLINE. OTHERWISE IT'S GOING TO MESS UP MY PROJECTION LATER ON AND IT'S WAY EASIER TO DO IT IN THIS STAGE
 #adding bucket to/pick to ff
-Started Google sheet with temp1
+7/22 this is like what i wanted to find better bucket sizes, going to have to do this after I filter out ADP data though
 ```{r}
 players_in_bucket <- Rookie_database %>% 
   distinct(player_id, .keep_all = TRUE) %>%
@@ -66,8 +157,6 @@ games_in_bucket <- Rookie_database %>%
   summarise(count = n())
 ```
 
-
-#data cleaning - moving to AllPlayersDatabase.Rmd to clean up file
 ```{r}
 ff <- All_Players_Database %>% 
   filter(season == "2023" | season == "2022" | season == "2024") %>%
@@ -86,6 +175,7 @@ ff <- ff %>%
   ) %>%
   ungroup()
 ```
+
 
 this is filtering out outlier games... anything above or below 3 standard deviations (thinking of Charbonnet bonkers game, Jauan jennings crazy game, etc. Don't want those factoring into my projection)
 ```{r}
@@ -127,9 +217,9 @@ post_trade <- c("00-0036264", "00-0036389", "00-0039918", "00-0038543", "00-0036
 ```
 
 Leaving out rookies
-Love, hurts, daniels, JSN, DeVonta, Charbonnet, Shaheed, Doubs, Coker
+Love, hurts, daniels, JSN, DeVonta, Charbonnet, Shaheed, Doubs, Coker, Shakir
 ```{r}
-pre_trade <- c("00-0036264", "00-0036389", "00-0039910", "00-0038543", "00-0036912", "00-0039165", "00-0037545", "00-0037816", "00-0039491", "00-0034270")
+pre_trade <- c("00-0036264", "00-0036389", "00-0039910", "00-0038543", "00-0036912", "00-0039165", "00-0037545", "00-0037816", "00-0039491", "00-0034270", "00-0037261")
 ```
 
 
@@ -235,7 +325,7 @@ return(long_scores_df)
 #Linear Sim, 2 teams
 Think this should come after I get rookie projection off the ground. Need to get someone else's team in here like I did with Jared's. I don't think it's worth doing this until I can actually test it out. 
 ```{r}
-linear_sim <- function(ff, team1, team2) {
+linear_sim_2teams <- function(ff, team1, team2) {
 #stores column names with player's ids
 player_ids_vector <- c()
 all_player_scores_list <- list()
@@ -565,11 +655,31 @@ ff_2 <- ff %>%
   filter(week < 2)
 ```
 
-Do I wanna use ff or Rookie_Database for all of the player bucket, id stuff? week 1 this ish isn't gonna work rn.
-This is a problem to solve for the future
-IMPORTANT ^
-Good as of 4/10
-Need to reconfigure this a lot now with the update to Linear Sim. It's even more crucial that this part runs fast since it's doing even more calculations than the first part is. 
+TEST THESE TWO. I WANNA SEE WHICH ONE EYEBALLS BETTER. MY GUESS IS OPTION 2
+Redoing above, piecewise with 50/50 split at 8 games. think ideal 50/50 split is going to be in 6-8 game stretch
+```{r}
+if(GP < 8){
+  p <- (6.25/50) * GP
+} else{
+  p <- .5 + (1/8) * (GP - 8)
+}
+bucket_weight <- (p * rook) / ((1-p) * bucket_games)
+combined_weights <- c(rep(1, rook), rep(bucket_weight, bucket_games))
+```
+
+Testing with 33/67 split after 6 games (even slower to weight rookie's own scores), then shoot up to fully rookie weighed at 12
+```{r}
+if(GP < 6){
+  p <- (5.5 / (100/3)) * GP
+} else {
+  p <- (1/3) + (1/9) * (GP - 6)
+}
+bucket_weight <- (p * rook) / ((1-p) * bucket_games)
+combined_weights <- c(rep(1, rook), rep(bucket_weight, bucket_games))
+```
+
+
+Kind of like the term "cohort" more than "bucket" tbh. Don't know if I should rename everything since that's so many variables, but just a thought
 ```{r}
 player_ids_vector <- c()
 all_player_scores_list <- list()
@@ -588,7 +698,8 @@ for(i in 1:length(ids)){
   #need to include played fewer than 12 games in this as well
   #need to check for second year players. Are they going to be calculated in this bucket? i know i went descending
   #season to try and avoid this. Maybe check if JSN calculated fine
-  if((player %>% distinct(player_id, .keep_all = TRUE))$is.rookie == TRUE & player %>% count(player_id) %>% pull(n) < 12){
+  #player %>% count(player_id) %>% pull(n) < 12 second condition in if loop, edited it out.
+  if((player %>% distinct(player_id, .keep_all = TRUE))$is.rookie == TRUE & player$GP %>% max() < 12){
 
   #what position rookie plays
   player_position <- ff_2 %>%
@@ -603,6 +714,7 @@ for(i in 1:length(ids)){
   pull(bucket) 
   
   #scores from the same position and bucket as the rookie we're looking at
+  #NEED TO FILTER OUT ROOKIES THAT AREN'T IN THE ADP DATA THAT I WANT
   position_bucket_scores <- Rookie_database %>% 
   filter(position == player_position & bucket == player_bucket) %>%
   # just added this line. in my brain, this is better at projecting guys' scores early bc it takes out rookie breakout stuff.
@@ -620,14 +732,24 @@ for(i in 1:length(ids)){
   #number of just bucket player's scores
   bucket_games <- length(position_bucket_scores)
   
-
-  #how strongly rookie's games are weighted
-  p <- (1/12) * rookie_games
-  #calculating the weight of the bucket
-  bucket_weight <- (p * rookie_games) / ((1-p) * bucket_games)
-  #combined vector to plug into wtd.quantile
-  combined_weights <- c(rep(1, rookie_games), rep(bucket_weight, bucket_games))
+  #This is the straight linear way that I initially had
+  # #how strongly rookie's games are weighted
+  # p <- (1/12) * rookie_games
+  # #calculating the weight of the bucket
+  # bucket_weight <- (p * rookie_games) / ((1-p) * bucket_games)
+  # #combined vector to plug into wtd.quantile
+  # combined_weights <- c(rep(1, rookie_games), rep(bucket_weight, bucket_games))
   
+  #This is implementing piecewise function instead to slow down weight of rookie's scores initially
+  #haven't actually tested this yet. probably will shit out somewhere. Want to test my other weighting system too. compare     which is better
+  if(GP < 8){
+    p <- (6.25/50) * GP
+  } else{
+    p <- .5 + (1/8) * (GP - 8)
+  }
+  bucket_weight <- (p * rook) / ((1-p) * bucket_games)
+  combined_weights <- c(rep(1, rook), rep(bucket_weight, bucket_games))
+    
   player_quantile <- wtd.quantile(c(player_scores, position_bucket_scores), weights = combined_weights)
   }
   

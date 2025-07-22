@@ -78,100 +78,136 @@ Rookie_database <- Rookie_database %>%
   rename(player_id = gsis_id)
 ```
 
+Extra 0 weeks
+```{r, message=FALSE}
+extra_zeros <- read_csv("Missing weeks Rookie data - Sheet1.csv") %>%
+  filter(!is.na(season)) 
+extra_zeros$week <- NA
+```
+
+Adding healthy scratches/zero fp games
+```{r}
+Rookie_database <- Rookie_database %>%
+  rbind(extra_zeros)
+```
+
+#Adding buckets to df without temp so i don't get error when rejoining
+UPDATED 7/22
+I still need to redo these buckets. Somewhere (draftbuckets.rmd? i redid these in a better way, need to shrink bucket sizes, especially for QB and TE)
+
+Going to have to redo these as well once I look at the numbers/position breakdowns for rookies actually drafted in dynasty drafts
+```{r}
+Rookie_database <- Rookie_database %>%
+    mutate(
+    bucket = 
+      case_when(
+        position == "WR" & pick < 16 ~ 1,
+        position == "WR" & pick < 33 & pick >= 16 ~ 2,
+        position == "WR" & pick < 66 & pick >= 33 ~ 3,
+        position == "WR" & pick < 100 & pick >= 66 ~ 4,
+        position == "WR" & pick < 170 & pick >= 100 ~ 5,
+        position == "WR" & TRUE ~ 6,
+        position == "RB" & pick < 33 ~ 1,
+        position == "RB" & pick < 66 & pick >= 33 ~ 2,
+        position == "RB" & pick < 100 & pick >= 66 ~ 3,
+        position == "RB" & pick < 180 & pick >= 100 ~ 4,
+        position == "RB" & TRUE ~ 5,
+        position == "TE" & pick < 33 ~ 1,
+        position == "TE" & pick < 68 & pick >= 33 ~ 3,
+        position == "TE" & pick < 95 & pick >= 68 ~ 4,
+        position == "TE" & pick < 120 & pick >= 120 ~ 5, 
+        position == "TE" & pick < 155 & pick >= 120 ~ 6,
+        position == "TE" & pick < 200 & pick >= 155 ~ 7,
+        position == "TE" & TRUE ~ 8,
+        position == "QB" & pick < 15 ~ 1,
+        position == "QB" & pick < 65 & pick >= 11 ~ 2,
+        position == "QB" & pick < 120 & pick >= 66 ~ 3,
+        position == "QB" & pick < 180 & pick >= 120 ~ 4,
+        position == "QB" & pick < 180 & pick >= 150 ~ 5,
+        position == "QB" & TRUE ~ 6
+      )
+    )
+```
+
 #Adding buckets to df
+All code from before adding in extra zeros
 ```{r}
-temp1 <- Rookie_database %>%
-  filter(position == "WR") %>% 
-  mutate(
-    bucket = 
-      case_when(
-        pick < 15 ~ 1,
-        pick < 33 & pick >= 16 ~ 2,
-        pick < 66 & pick >= 33 ~ 3,
-        pick < 100 & pick >= 66 ~ 4,
-        pick < 170 & pick >= 100 ~ 5,
-        TRUE ~ 6
-      )
-  )
+# temp1 <- Rookie_database %>%
+#   filter(position == "WR") %>% 
+#   mutate(
+#     bucket = 
+#       case_when(
+#         pick < 16 ~ 1,
+#         pick < 33 & pick >= 16 ~ 2,
+#         pick < 66 & pick >= 33 ~ 3,
+#         pick < 100 & pick >= 66 ~ 4,
+#         pick < 170 & pick >= 100 ~ 5,
+#         TRUE ~ 6
+#       )
+#   )
 ```
 
 
 ```{r}
-temp2 <- Rookie_database %>%
-  filter(position == "RB") %>% 
-  mutate(
-    bucket = 
-      case_when(
-        pick < 33 ~ 1,
-        pick < 66 & pick >= 33 ~ 2,
-        pick < 100 & pick >= 66 ~ 3,
-        pick < 180 & pick >= 100 ~ 4,
-        TRUE ~ 5
-      )
-  )
+# temp2 <- Rookie_database %>%
+#   filter(position == "RB") %>% 
+#   mutate(
+#     bucket = 
+#       case_when(
+#         pick < 33 ~ 1,
+#         pick < 66 & pick >= 33 ~ 2,
+#         pick < 100 & pick >= 66 ~ 3,
+#         pick < 180 & pick >= 100 ~ 4,
+#         TRUE ~ 5
+#       )
+#   )
 ```
 
 
 ```{r}
-temp3 <- Rookie_database %>%
-  filter(position == "QB") %>% 
-  mutate(
-    bucket = 
-      case_when(
-        pick < 15 ~ 1,
-        pick < 65 & pick >= 11 ~ 2,
-        pick < 120 & pick >= 66 ~ 3,
-        pick < 180 & pick >= 120 ~ 4,
-        pick < 180 & pick >= 150 ~ 5,
-        TRUE ~ 6
-      )
-  )
+# temp3 <- Rookie_database %>%
+#   filter(position == "QB") %>% 
+#   mutate(
+#     bucket = 
+#       case_when(
+#         pick < 15 ~ 1,
+#         pick < 65 & pick >= 11 ~ 2,
+#         pick < 120 & pick >= 66 ~ 3,
+#         pick < 180 & pick >= 120 ~ 4,
+#         pick < 180 & pick >= 150 ~ 5,
+#         TRUE ~ 6
+#       )
+#   )
 ```
 
 
 ```{r}
-temp4 <- Rookie_database %>%
-  filter(position == "TE") %>% 
-  mutate(
-    bucket = 
-      case_when(
-        pick < 33 ~ 1,
-        pick < 68 & pick >= 33 ~ 3,
-        pick < 95 & pick >= 68 ~ 4,
-        pick < 120 & pick >= 120 ~ 5, 
-        pick < 155 & pick >= 120 ~ 6,
-        pick < 200 & pick >= 155 ~ 7,
-        TRUE ~ 8
-      )
-  )
+# temp4 <- Rookie_database %>%
+#   filter(position == "TE") %>% 
+#   mutate(
+#     bucket = 
+#       case_when(
+#         pick < 33 ~ 1,
+#         pick < 68 & pick >= 33 ~ 3,
+#         pick < 95 & pick >= 68 ~ 4,
+#         pick < 120 & pick >= 120 ~ 5, 
+#         pick < 155 & pick >= 120 ~ 6,
+#         pick < 200 & pick >= 155 ~ 7,
+#         TRUE ~ 8
+#       )
+#   )
 ```
 
 ```{r}
-temp <- rbind(temp1, temp2, temp3, temp4)
+# temp <- rbind(temp1, temp2, temp3, temp4)
 ```
 
-```{r}
-Rookie_database <- left_join(Rookie_database, temp %>% select(player_id, week, bucket), by = c("week", "player_id")) %>%
-  filter(!is.na(full_name))
-```
 
-#Data cleaning
-```{r}
-Rookie_database <- Rookie_database %>%
-  group_by(position, bucket) %>%
-  mutate(
-    deviation = sd(total_fantasy_points, na.rm = TRUE),
-    mean = mean(total_fantasy_points, na.rm = TRUE)
-  ) %>%
-  ungroup()
-```
 
+I can't use week here since all of my week numbers are NA in my google doc... and i saved over rookie_database. That should be easy to do tho, just unjoin
 ```{r}
-Rookie_database <- Rookie_database %>%
-  filter((total_fantasy_points <= mean + 3 * deviation & total_fantasy_points >= mean - 3 * deviation)) %>%
-  filter(total_fantasy_points >= 0) %>%
-  #added this line so there'd be no double counting once next season starts
-  filter(season != "2025")
+# Rookie_database <- left_join(Rookie_database, temp %>% select(player_id, week, bucket), by = c("week", "player_id")) %>%
+#   filter(!is.na(full_name))
 ```
 
 ```{r}

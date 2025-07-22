@@ -41,12 +41,16 @@ for(i in 2015:2024){
 }
 ```
 
+7/22 gonna need to give this a resave at some point. 
 ```{r}
 All_Players_Database <- All_Players_Database %>%
   mutate(
     is.rookie = 
       case_when(
         season_player_id %in% Rookie_database$season_player_id ~ TRUE,
+        #Malcolm Mitchell wasn't working, dk why. 
+        season_player_id == "2016 00-0032400" ~ TRUE,
+        season_player_id == "2016 00-0032974" ~ TRUE,
         TRUE ~ FALSE
       )
   )
