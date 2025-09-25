@@ -5,6 +5,7 @@ date: "2025-02-11"
 output: html_document
 ---
 
+Updated as of 7/29
 ```{r, message=FALSE}
 library(tidyverse)
 library(dplyr)
@@ -20,9 +21,11 @@ Importing rookie database:
 load("RookieDatabase.RData")
 ```
 
+Left out Ty Montgomery 2015 season bc his data is in Rookie Database, I'm filtering 2022-2024 in the FantasySim.Rmd anyways.
+
 #Looping attempt
 ```{r}
-for(i in 2015:2024){
+for(i in 2015:2025){
     ff <- load_ff_opportunity(seasons = i) %>%
       filter(!is.na(player_id))
     
@@ -31,7 +34,7 @@ for(i in 2015:2024){
         season_player_id = paste(season, player_id, sep = " "), 
         half_ppg = 0.5 * receptions + .04 * pass_yards_gained + .1 * (rec_yards_gained + rush_yards_gained) + 4 * pass_touchdown + 6 * (rush_touchdown + rec_touchdown) + 2 * (pass_two_point_conv + rush_two_point_conv + rec_two_point_conv) + -2 * (pass_interception + rec_fumble_lost + rush_fumble_lost)
       ) %>%
-        select(season, week, posteam, game_id, player_id, season_player_id, full_name, position, pass_yards_gained, pass_touchdown, pass_interception,pass_two_point_conv, receptions, rec_attempt, rec_yards_gained, rec_touchdown, rec_fumble_lost, rec_two_point_conv, rush_attempt, rush_yards_gained, rush_touchdown, rush_two_point_conv, rush_fumble_lost, total_fantasy_points, half_ppg)
+        select(season, week, posteam, game_id, player_id, season_player_id, full_name, position, pass_attempt, pass_yards_gained, pass_touchdown, pass_interception,pass_two_point_conv, receptions, rec_attempt, rec_yards_gained, rec_touchdown, rec_fumble_lost, rec_two_point_conv, rush_attempt, rush_yards_gained, rush_touchdown, rush_two_point_conv, rush_fumble_lost, total_fantasy_points, half_ppg)
     
     if(i == 2015){
       All_Players_Database <- data.frame(ff)
@@ -41,6 +44,92 @@ for(i in 2015:2024){
 }
 ```
 
+```{r}
+All_Players_Database <- All_Players_Database %>%
+  mutate(
+    total_fantasy_points = if_else(position == "TE", total_fantasy_points + 0.5 * receptions, total_fantasy_points)
+  )
+```
+
+```{r}
+All_Players_Database <- All_Players_Database %>%
+  filter(!(position == "QB" & pass_attempt < 10)) %>%
+  select(-pass_attempt)
+```
+
+
+```{r}
+player_id = c("R-WR1", "R-WR2", "R-WR3", "R-WR4", "R-WR5", "R-WR6", "R-RB1", "R-RB2", "R-RB3", "R-RB4", "R-RB5", "R-TE1", "R-TE2", "R-TE3", "R-TE4", "R-TE5", "R-QB1", "R-QB2", "R-QB3", "R-QB4", "R-QB5")
+```
+
+
+```{r}
+#final vector with all placeholder rookies
+updated_ids <- c()
+#contains the additions on the end
+for(i in 1:length(player_id)){
+  #just want to hold the current position (R-WR1) that i'm looking at
+  new_id <- c()
+  current_pos <- player_id[i]
+  for(j in 1:5){
+    new_id <- c(new_id, paste0(j, "-", current_pos))
+    j <- j + 1
+  }
+  updated_ids <- c(updated_ids, new_id)
+  i <- i + 1
+}
+```
+
+```{r}
+full_names <- c("Rookie WR pick 1-15", "Rookie WR pick 16-32",  "Rookie WR pick 33-65",  "Rookie WR pick 66-99",  "Rookie WR pick 100-169",  "Rookie WR pick 170+",  "Rookie RB pick 1-32",  "Rookie RB pick 33-65",  "Rookie RB pick 66-99",  "Rookie RB pick 100-179",  "Rookie RB pick 180+",   "Rookie TE pick 1-32",  "Rookie TE pick 33-94",  "Rookie TE pick 95-119",  "Rookie TE pick 120-154",  "Rookie TE pick 155+",  "Rookie QB pick 1-9",  "Rookie QB pick 10-20",  "Rookie QB pick 21-32",  "Rookie QB pick 33-99",  "Rookie QB pick 100+")
+```
+
+```{r}
+#final vector with all placeholder rookies
+updated_full_name <- c()
+#contains the additions on the end
+for(i in 1:length(full_names)){
+  #just want to hold the current position (R-WR1) that i'm looking at
+  new_names <- c()
+  current_name <- full_names[i]
+  for(j in 1:5){
+    new_names <- c(new_names, paste0(current_name, ", ", j))
+    j <- j + 1
+  }
+  updated_full_name <- c(updated_full_name, new_names)
+  i <- i + 1
+}
+```
+
+Going to have to change all of these 6s to 5s, then the 36 below to 30, 25, 25, 25, the 126 at the start to 105
+```{r}
+df <- tibble::tibble(
+  season = c(rep(0, 105)),
+  week = c(rep(0, 105)),
+  full_name = updated_full_name,
+  player_id = updated_ids,
+  season_player_id = paste0(season, " ", player_id),
+  position = c(rep("WR", 30), rep("RB", 25), rep("TE", 25), rep("QB", 25)),
+  total_fantasy_points = NA
+)
+```
+
+```{r}
+All_Players_Database <- All_Players_Database %>%
+  select(season,
+     week, 
+     full_name,
+     player_id,
+     season_player_id,
+     full_name,
+     position,
+     total_fantasy_points)
+```
+
+```{r}
+All_Players_Database <- rbind(All_Players_Database, df)
+```
+
 7/22 gonna need to give this a resave at some point. 
 ```{r}
 All_Players_Database <- All_Players_Database %>%
@@ -48,12 +137,30 @@ All_Players_Database <- All_Players_Database %>%
     is.rookie = 
       case_when(
         season_player_id %in% Rookie_database$season_player_id ~ TRUE,
-        #Malcolm Mitchell wasn't working, dk why. 
+        player_id %in% updated_ids ~ TRUE,
         season_player_id == "2016 00-0032400" ~ TRUE,
         season_player_id == "2016 00-0032974" ~ TRUE,
+        season_player_id == "2016 00-0032377" ~ TRUE,
+        season_player_id == "2019 00-0035350" ~ TRUE,
+        season_player_id == "2019 00-0034960" ~ TRUE,
+        season_player_id == "2021 00-0036755" ~ TRUE,
+        season_player_id == "2024 00-0039811" ~ TRUE,
         TRUE ~ FALSE
       )
   )
+```
+
+
+
+#Adding GP to all players database (added 8/21)
+```{r}
+All_Players_Database <- All_Players_Database %>%
+  arrange(season, week) %>%
+  group_by(season, player_id) %>%
+  mutate(
+    GP = if_else(player_id %in% updated_ids, 0, row_number())
+  ) %>%
+  ungroup()
 ```
 
 

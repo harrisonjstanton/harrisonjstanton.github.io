@@ -5,7 +5,7 @@ date: "2025-02-11"
 output: html_document
 ---
 
-Updated as of 6/30
+Updated as of 7/29
 ```{r, message=FALSE}
 library(tidyverse)
 library(dplyr)
@@ -15,6 +15,57 @@ library(nflfastR)
 library(nflreadr)
 ```
 
+```{r}
+load("All_Players_Database.RData")
+```
+
+Extra 0 weeks
+```{r, message=FALSE}
+extra_zeros <- read_csv("Missing weeks Rookie data - Sheet1.csv") %>%
+  filter(!is.na(season)) 
+extra_zeros$week <- NA
+```
+
+Players drafted in rookie drafts 2015-2024
+```{r}
+ADP_data <- read_csv("Rookies drafted 2015-2025 - Sheet1.csv") %>%
+  rename(full_name = Name)
+ADP_data <- rbind(ADP_data, c("Dillon Gabriel", "QB", "2025"), c("Chimere Dike", "WR", "2025"), c("Oronde Gadsden II", "TE", "2025"), c("Arian Smith", "WR", "2025"))
+```
+
+
+rowbind this to the end of rookie database, then save as well. Going to have to rebind extra zeros as well. 
+Add Roman Wilson to this list once he plays
+probably gonna need to add monangai here too, see if this ish works or not. might have to add a bucket for him too.
+```{r}
+extra_rookies <- All_Players_Database %>%
+  filter(season_player_id == "2016 00-0032400" | season_player_id == "2016 00-0032974" | season_player_id == "2016 00-0032377" | season_player_id == "2019 00-0035350" | season_player_id == "2019 00-0034960" | season_player_id == "2021 00-0036755" | season_player_id == "2025 00-0039923" | season_player_id == "2025 00-0040782")
+```
+
+```{r}
+extra_rookies <- extra_rookies %>%
+  select(-is.rookie)
+```
+
+```{r}
+extra_rookies <- extra_rookies %>%
+  mutate(
+    round =
+    case_when(
+      player_id == "00-0032400" ~ 4,
+      player_id == "00-0032974" ~ 5,
+      TRUE ~ 8
+    ),
+    pick =
+      case_when(
+      player_id == "00-0032400" ~ 112,
+      player_id == "00-0032974" ~ 154,
+      TRUE ~ 300
+      )
+  )
+```
+
+
 
 ```{r}
 rookies <- load_draft_picks() %>%
@@ -23,6 +74,73 @@ rookies <- load_draft_picks() %>%
   select(season, round, pick, team, gsis_id, pfr_player_name, position)
 ```
 
+#Adding gsis id to rookies
+Guys who haven't played that I need to add: 
+Jaxson Dart - add
+Quinshon Judkins - add
+Tyler Shough
+Terrance Ferguson
+Pat Bryant
+Dillon Gabriel - add
+Tai Felton
+Chimere Dike (not rostered in our league, don't really care)
+arian smith - add
+Jarquez Hunter
+Jalen Royals
+Jaydon Blue
+Brashard Smith
+Shedeur Sanders
+Tory Horton - add
+Tahj brooks
+Devin Neal
+
+```{r}
+rookies <- rookies %>%
+  mutate(
+    gsis_id =
+      case_when(
+        pfr_player_name == "Cam Ward" ~ "00-0040676",
+        pfr_player_name == "Travis Hunter" ~ "00-0040718",
+        pfr_player_name == "Ashton Jeanty" ~ "00-0040122", 
+        pfr_player_name == "Tetairoa McMillan" ~ "00-0040124",
+        pfr_player_name == "Colston Loveland" ~ "00-0040126",
+        pfr_player_name == "Tyler Warren" ~ "00-0040128",
+        pfr_player_name == "Emeka Egbuka" ~ "00-0040129",
+        pfr_player_name == "Omarion Hampton" ~ "00-0040666",
+        pfr_player_name == "Matthew Golden" ~ "00-0040667",
+        pfr_player_name == "Jayden Higgins" ~ "00-0040130",
+        pfr_player_name == "TreVeyon Henderson" ~ "00-0040734",
+        pfr_player_name == "Luther Burden" ~ "00-0040735",
+        pfr_player_name == "Mason Taylor" ~ "00-0040736", 
+        pfr_player_name == "Elijah Arroyo" ~ "00-0040739",
+        pfr_player_name == "Tre Harris" ~ "00-0040727",
+        pfr_player_name == "Jack Bech" ~ "00-0040729",
+        pfr_player_name == "RJ Harvey" ~ "00-0040730",
+        pfr_player_name == "Harold Fannin" ~ "00-0040663",
+        pfr_player_name == "Kyle Williams" ~ "00-0040131",
+        pfr_player_name == "Isaac TeSlaa" ~ "00-0040669",
+        pfr_player_name == "Jaylin Noel" ~ "00-0040138",
+        pfr_player_name == "Kaleb Johnson" ~ "00-0040142",
+        pfr_player_name == "Savion Williams" ~ "00-0040009",
+        pfr_player_name == "Jalen Milroe" ~ "00-0040673",
+        pfr_player_name == "Bhayshul Tuten" ~ "00-0040719",
+        pfr_player_name == "Cam Skattebo" ~ "00-0040715",
+        pfr_player_name == "Dont'e Thornton" ~ "00-0040581",
+        pfr_player_name == "Trevor Etienne" ~ "00-0040644",
+        pfr_player_name == "Woody Marks" ~ "00-0040583",
+        pfr_player_name == "Gunnar Helm" ~ "00-0040584",
+        pfr_player_name == "Dylan Sampson" ~ "00-0040162",
+        pfr_player_name == "Jaylin Lane" ~ "00-0040164",
+        pfr_player_name == "Elic Ayomanor" ~ "00-0040170",
+        pfr_player_name == "DJ Giddens" ~ "00-0040179",
+        pfr_player_name == "KeAndre Lambert-Smith" ~ "00-0040184",
+        pfr_player_name == "Ollie Gordon" ~ "00-0040198",
+        pfr_player_name == "Kyle Monangai" ~ "00-0040236",
+        pfr_player_name == "Jacory Croskey-Merritt" ~ "00-0040242",
+        TRUE ~ gsis_id
+       )
+  ) 
+```
 
 
 ```{r}
@@ -34,7 +152,7 @@ rookies <- rookies %>%
 
 
 ```{r}
-for(i in 2015:2024){
+for(i in 2015:2025){
     ff <- load_ff_opportunity(seasons = i)
     
     ff <- ff %>%
@@ -44,7 +162,7 @@ for(i in 2015:2024){
     
     ff <- ff %>%
       filter(season_player_id %in% rookies$season_player_id) %>%
-      select(season, week, posteam, game_id, player_id, season_player_id, full_name, position, pass_yards_gained, pass_touchdown, pass_interception,pass_two_point_conv, receptions, rec_attempt, rec_yards_gained, rec_touchdown, rec_fumble_lost, rec_two_point_conv, rush_attempt, rush_yards_gained, rush_touchdown, rush_two_point_conv, rush_fumble_lost, total_fantasy_points)
+      select(season, week, posteam, game_id, player_id, season_player_id, full_name, position, pass_attempt, pass_yards_gained, pass_touchdown, pass_interception,pass_two_point_conv, receptions, rec_attempt, rec_yards_gained, rec_touchdown, rec_fumble_lost, rec_two_point_conv, rush_attempt, rush_yards_gained, rush_touchdown, rush_two_point_conv, rush_fumble_lost, total_fantasy_points)
     
     ff<- ff %>%
       mutate(
@@ -62,6 +180,21 @@ for(i in 2015:2024){
 }
 ```
 
+```{r}
+Rookie_database <- Rookie_database %>% 
+  filter(!(position == "QB" & pass_attempt < 10)) %>%
+  arrange(desc(season)) %>%
+  select(-pass_attempt)
+```
+
+
+```{r}
+Rookie_database <- Rookie_database %>%
+  mutate(
+    total_fantasy_points = if_else(position == "TE", total_fantasy_points + 0.5 * receptions, total_fantasy_points)
+  )
+```
+
 
 ```{r}
 Rookie_database <- Rookie_database %>%
@@ -75,20 +208,35 @@ Rookie_database <- inner_join(Rookie_database, rookies %>% select(gsis_id, round
 
 ```{r}
 Rookie_database <- Rookie_database %>%
-  rename(player_id = gsis_id)
+  rename(player_id = gsis_id) 
 ```
 
-Extra 0 weeks
-```{r, message=FALSE}
-extra_zeros <- read_csv("Missing weeks Rookie data - Sheet1.csv") %>%
-  filter(!is.na(season)) 
-extra_zeros$week <- NA
-```
+
 
 Adding healthy scratches/zero fp games
+Ty Montgomery rookie year should be in this dataset
 ```{r}
 Rookie_database <- Rookie_database %>%
   rbind(extra_zeros)
+```
+
+```{r}
+Rookie_database <- Rookie_database %>%
+  select(season,
+     week, 
+     full_name,
+     player_id,
+     season_player_id,
+     full_name,
+     position,
+     total_fantasy_points, 
+     round,
+     pick)
+```
+
+```{r}
+Rookie_database <- Rookie_database %>%
+  rbind(extra_rookies %>% select(-GP))
 ```
 
 #Adding buckets to df without temp so i don't get error when rejoining
@@ -113,102 +261,111 @@ Rookie_database <- Rookie_database %>%
         position == "RB" & pick < 180 & pick >= 100 ~ 4,
         position == "RB" & TRUE ~ 5,
         position == "TE" & pick < 33 ~ 1,
-        position == "TE" & pick < 68 & pick >= 33 ~ 3,
-        position == "TE" & pick < 95 & pick >= 68 ~ 4,
-        position == "TE" & pick < 120 & pick >= 120 ~ 5, 
-        position == "TE" & pick < 155 & pick >= 120 ~ 6,
-        position == "TE" & pick < 200 & pick >= 155 ~ 7,
-        position == "TE" & TRUE ~ 8,
-        position == "QB" & pick < 15 ~ 1,
-        position == "QB" & pick < 65 & pick >= 11 ~ 2,
-        position == "QB" & pick < 120 & pick >= 66 ~ 3,
-        position == "QB" & pick < 180 & pick >= 120 ~ 4,
-        position == "QB" & pick < 180 & pick >= 150 ~ 5,
-        position == "QB" & TRUE ~ 6
+        position == "TE" & pick < 95 & pick >= 33 ~ 2,
+        position == "TE" & pick < 120 & pick >= 95 ~ 3,
+        position == "TE" & pick < 155 & pick >= 120 ~ 4, 
+        position == "TE" & TRUE ~ 5,
+        position == "QB" & pick < 10 ~ 1,
+        position == "QB" & pick < 21 & pick >= 10 ~ 2,
+        position == "QB" & pick < 33 & pick >= 21 ~ 3,
+        position == "QB" & pick < 100 & pick >= 33 ~ 4,
+        position == "QB" & TRUE ~ 5
       )
     )
 ```
 
-#Adding buckets to df
-All code from before adding in extra zeros
 ```{r}
-# temp1 <- Rookie_database %>%
-#   filter(position == "WR") %>% 
-#   mutate(
-#     bucket = 
-#       case_when(
-#         pick < 16 ~ 1,
-#         pick < 33 & pick >= 16 ~ 2,
-#         pick < 66 & pick >= 33 ~ 3,
-#         pick < 100 & pick >= 66 ~ 4,
-#         pick < 170 & pick >= 100 ~ 5,
-#         TRUE ~ 6
-#       )
-#   )
+Rookie_database <- Rookie_database %>%
+  select(-round, -pick)
 ```
 
 
 ```{r}
-# temp2 <- Rookie_database %>%
-#   filter(position == "RB") %>% 
-#   mutate(
-#     bucket = 
-#       case_when(
-#         pick < 33 ~ 1,
-#         pick < 66 & pick >= 33 ~ 2,
-#         pick < 100 & pick >= 66 ~ 3,
-#         pick < 180 & pick >= 100 ~ 4,
-#         TRUE ~ 5
-#       )
-#   )
+players_in_bucket <- Rookie_database %>% 
+  distinct(player_id, .keep_all = TRUE) %>%
+  group_by(position, bucket) %>% 
+  summarise(count = n())
+
+games_in_bucket <- Rookie_database %>% 
+  group_by(position, bucket) %>% 
+  summarise(count = n())
+```
+
+```{r}
+Rookie_database <- Rookie_database %>%
+  filter(full_name %in% ADP_data$full_name)
+```
+
+
+
+#added as of 8/21
+
+
+6 of each, 1 be generic, the rest be -1 or -2
+code to make the necessary generic buckets
+```{r}
+player_id = c("R-WR1", "R-WR2", "R-WR3", "R-WR4", "R-WR5", "R-WR6", "R-RB1", "R-RB2", "R-RB3", "R-RB4", "R-RB5", "R-TE1", "R-TE2", "R-TE3", "R-TE4", "R-TE5", "R-QB1", "R-QB2", "R-QB3", "R-QB4", "R-QB5")
 ```
 
 
 ```{r}
-# temp3 <- Rookie_database %>%
-#   filter(position == "QB") %>% 
-#   mutate(
-#     bucket = 
-#       case_when(
-#         pick < 15 ~ 1,
-#         pick < 65 & pick >= 11 ~ 2,
-#         pick < 120 & pick >= 66 ~ 3,
-#         pick < 180 & pick >= 120 ~ 4,
-#         pick < 180 & pick >= 150 ~ 5,
-#         TRUE ~ 6
-#       )
-#   )
+#final vector to return
+updated_ids <- c()
+#contains the additions on the end
+for(i in 1:length(player_id)){
+  #just want to hold the current position (R-WR1) that i'm looking at
+  new_id <- c()
+  current_pos <- player_id[i]
+  for(j in 1:5){
+    new_id <- c(new_id, paste0(j, "-", current_pos))
+    j <- j + 1
+  }
+  updated_ids <- c(updated_ids, new_id)
+  i <- i + 1
+}
+```
+
+```{r}
+full_names <- c("Rookie WR pick 1-15", "Rookie WR pick 16-32",  "Rookie WR pick 33-65",  "Rookie WR pick 66-99",  "Rookie WR pick 100-169",  "Rookie WR pick 170+",  "Rookie RB pick 1-32",  "Rookie RB pick 33-65",  "Rookie RB pick 66-99",  "Rookie RB pick 100-179",  "Rookie RB pick 180+",   "Rookie TE pick 1-32",  "Rookie TE pick 33-94",  "Rookie TE pick 95-119",  "Rookie TE pick 120-154",  "Rookie TE pick 155+",  "Rookie QB pick 1-9",  "Rookie QB pick 10-20",  "Rookie QB pick 21-32",  "Rookie QB pick 33-99",  "Rookie QB pick 100+")
+```
+
+```{r}
+#final vector with all placeholder rookies
+updated_full_name <- c()
+#contains the additions on the end
+for(i in 1:length(full_names)){
+  #just want to hold the current position (R-WR1) that i'm looking at
+  new_names <- c()
+  current_name <- full_names[i]
+  for(j in 1:5){
+    new_names <- c(new_names, paste0(current_name, ", ", j))
+    j <- j + 1
+  }
+  updated_full_name <- c(updated_full_name, new_names)
+  i <- i + 1
+}
+```
+
+
+Going to have to change all of these 6s to 5s, then the 36 below to 30, 25, 25, 25, the 126 at the start to 105
+```{r}
+df <- tibble::tibble(
+  season = c(rep(0, 105)),
+  week = c(rep(0, 105)),
+  full_name = updated_full_name,
+  player_id = updated_ids,
+  season_player_id = paste0(season, " ", player_id),
+  position = c(rep("WR", 30), rep("RB", 25), rep("TE", 25), rep("QB", 25)),
+  total_fantasy_points = NA,
+  bucket = c(rep(1:6, each = 5), rep(rep(1:5, each = 5), 3))
+)
 ```
 
 
 ```{r}
-# temp4 <- Rookie_database %>%
-#   filter(position == "TE") %>% 
-#   mutate(
-#     bucket = 
-#       case_when(
-#         pick < 33 ~ 1,
-#         pick < 68 & pick >= 33 ~ 3,
-#         pick < 95 & pick >= 68 ~ 4,
-#         pick < 120 & pick >= 120 ~ 5, 
-#         pick < 155 & pick >= 120 ~ 6,
-#         pick < 200 & pick >= 155 ~ 7,
-#         TRUE ~ 8
-#       )
-#   )
+Rookie_database <- rbind(Rookie_database, df)
 ```
 
-```{r}
-# temp <- rbind(temp1, temp2, temp3, temp4)
-```
-
-
-
-I can't use week here since all of my week numbers are NA in my google doc... and i saved over rookie_database. That should be easy to do tho, just unjoin
-```{r}
-# Rookie_database <- left_join(Rookie_database, temp %>% select(player_id, week, bucket), by = c("week", "player_id")) %>%
-#   filter(!is.na(full_name))
-```
 
 ```{r}
 save(Rookie_database,
