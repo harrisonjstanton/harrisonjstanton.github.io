@@ -17,8 +17,7 @@ To do list (9/20)
 7. Check how rookies not in that sample look (like kyle williams)
 
 For next year:
-1. figure out how to add in bye weeks
-2. figure out how to add in usage so that I don't have to completely delete players
+1. backtest adding 2025 weighted so I don't have to manually tweak so many players (like Travis Kelce, Jonathan Taylor, etc)
 ```{r, message=FALSE}
 library(tidyverse)
 library(dplyr)
@@ -30,15 +29,6 @@ library(stats)
 library(Hmisc)
 library(readr)
 library(scales)
-```
-
-
-```{r, message=FALSE}
-#this is the rookies who were drafted in the first 3 rounds of rookie drafts from 2015-2023
-#source - https://fantasyfootballcalculator.com/adp/rookie/12-team/all/2024
-#added our own rookie draft for 2024 since it didn't have that data
-ADP_data <- read_csv("Rookies drafted 2015-2025 - Sheet1.csv") %>%
-  rename(full_name = Name)
 ```
 
 
@@ -92,21 +82,10 @@ ff <- ff %>%
   ungroup()
 ```
 
-Manually added Tonges' deviation so he didn't get filtered out. 
+
 ```{r}
 ff <- ff %>%
-  mutate(
-    deviation =
-      if_else(player_id == "00-0037112", 5, deviation)
-  )
-```
-
-
-
-Might need to add 
-```{r}
-ff <- ff %>%
-  filter((is.rookie == FALSE & total_fantasy_points <= mean + 3 * deviation & total_fantasy_points >= mean - 3 * deviation) | is.rookie == TRUE)
+  filter((is.rookie == FALSE & total_fantasy_points <= mean + 3 * deviation & total_fantasy_points >= mean - 3 * deviation) | is.rookie == TRUE | is.na(deviation) & !is.na(mean))
 ```
 
 
@@ -130,8 +109,6 @@ Included this so I didn't double count rookie's scores when generating the weigh
 Rookie_database <- Rookie_database %>%
   filter(season != 2025)
 ```
-
-
 
 
 
@@ -178,8 +155,8 @@ The projections that seem to always be the most off are rookies and old guys who
 Is my way of projecting rookies even better? or should I really just have this sucker weight rookie scores way more than it does? Like maybe even by game 3 have like 2/3 weighted to rookies? but then the malik nabers huge game still is a problem. Or could i just have it be like 2/3 weight the whole time, and then just a jump after like 6 games to like 90% that player's scores, then 100% after 12
   - Think this sounds right tbh. Test this tonight. 
 ```{r}
-avg_3 <- scores3 %>%
-  filter(player_id %in% Rookie_team) %>% 
+avg <- scores %>%
+  filter(player_id %in% Team_Kloth) %>%
   group_by(player_id) %>%
   summarise(
     lin_avg = mean(score)
@@ -195,19 +172,216 @@ This works correctly 9/4
 Changed this on 9/18 to weight rookie scores more heavily early on. made it 40% over the first 4. This still isn't perfect (ex. matthew golden too high, colston loveland too high) but from an eye test for rookies it definitely looks better.
 
 Another thought that I had was if they hadn't played yet in 2025 minus QBs and Chris Godwin, what if I docked their potential scores by 90%? Then teams like Luke's wouldn't be so dumb and over project.
-Jordan Mason, Trey Benson, Emari Demercado
+Jordan Mason, Trey Benson, Emari Demercado (need to add demarcado to this, michael carter too)
+
+Score * 1.75
 ```{r}
-increased_roles <- c("00-0037525", "00-0039921", "00-0038705")
+increased_roles <- c(
+  #Kimani Vidal
+  "00-0039391",
+  #Hassan Haskins
+  "00-0037617",
+  #Trey Benson
+  "00-0039921", 
+  #Emari Demercado
+  "00-0038705",
+  #Michael Carter
+  "00-0036924",
+  #Sean Tucker
+  "00-0038951"
+  )
 ```
 
-brian robinson, tank bigsby, adam thielen, Jonnu Smith, Najee Harris
+Bengals, backup QB (* .8)
+CHANGE THIS AFTER LIKE WEEK 5 OF BROWNING. CAN'T DEDUCT ONCE SAMPLE IS BIGGER
 ```{r}
-decreased_roles <- c("00-0037746", "00-0038555", "00-0030035", "00-0033858", "00-0036893")
+bengals <- ff %>%
+  filter(season == 2025) %>%
+  filter(posteam %in% c("CIN")) %>%
+  distinct(player_id, .keep_all = FALSE) %>%
+  pull(player_id)
+```
+
+```{r}
+ravens <- ff %>%
+  filter(season == 2025) %>%
+  filter(posteam %in% c("BAL")) %>%
+  distinct(player_id, .keep_all = FALSE) %>%
+  pull(player_id)
 ```
 
 
-I don't think this idea ^^ will work, but I think I need to find ways to dock some of these teams tbh. 
-This is better than it has been with increased/decreased role and rookie tweaks. going to try this, then try it in nerfed and see what happens 
+score * .35
+```{r}
+decreased_roles <- c(
+  #Roschon Johnson
+  "00-0039021",
+  #DeAndre Hopkins
+  "00-0030564",
+  #Curtis Samuel
+  "00-0033282",
+  #NWI
+  "00-0036182",
+  #Will Dissly
+  "00-0034159",
+  #Pop Douglas
+  "00-0038621",
+  #Jordan Whittington
+  "00-0039751",
+  #Luke Musgrave
+  "00-0039144",
+  #Brian Robinson
+  "00-0037746",
+  #Tank Bigsby
+  "00-0038555",
+  #Adam Thielen
+  "00-0030035", 
+  #Jonnu Smith
+  "00-0033858",
+  #Keaton Mitchell
+  "00-0038454",
+  #Malachi Corley
+  "00-0039920",
+  #Tim Patrick
+  "00-0033375",
+  #Roschon Johnson 
+  "00-0039021",
+  #Isaac Guerendo
+  "00-0039363",
+  #Taysom Hill
+  "00-0033357"
+  )
+```
+
+score * 0
+```{r}
+bye_week <- ff %>%
+  filter(season == 2025) %>%
+  filter(posteam %in% c("MIN", "HOU")) %>%
+  distinct(player_id, .keep_all = FALSE) %>%
+  pull(player_id)
+```
+
+score * 0
+Keey an eye on Christian Watson, Ricky Pearsall/Jauan jennings, Terry McLaurin, bucky irving, mike evans, colston loveland, Jalen Coker, Chuba Hubbard
+```{r}
+injured <- c(
+  #Lucas Krull
+  "00-0037539",
+  #Antonio Gibson
+  "00-0036328",
+  #Omarion Hampton
+  "00-0040666",
+  #Darius Slayton
+  "00-0035535",
+  #Brenton Strange
+  "00-0038935",
+  #Brock Bowers
+  "00-0039338",
+  #Bucky Irving
+  "00-0039361",
+  #James Conner
+  "00-0033553", 
+  #Colston Loveland
+  # "00-0040126",
+  #Jayden Reed
+  "00-0039146",
+  #Jalen Coker
+  "00-0039491",
+  #Lamar Jackson
+  "00-0034796",
+  #Tank Dell
+  "00-0038977", 
+  #Malik Nabers
+  "00-0039337", 
+  #J.J. McCarthy
+  "00-0039923",
+  #Joe Burrow
+  "00-0036442", 
+  #Mike Evans
+  "00-0031408",
+  #Brandon Aiyuk
+  "00-0036261",
+  #Christian Watson
+  "00-0038124",
+  #Aaron Jones
+  "00-0033293",
+  #Braelon Allen
+  "00-0039794",
+  #Joe Mixon
+  "00-0033897",
+  #Tyreek Hill
+  "00-0033040",
+  #George Kittle
+  "00-0033288",
+  #Ja'Tavion Sanders
+  "00-0039356",
+  #Ja'Lynn Polk
+  "00-0039907",
+  #Trey Benson
+  "00-0039921",
+  #Ricky Pearsall
+  "00-0039916",
+  #Cedric Tillman
+  "00-0038979",
+  #Brock Purdy
+  "00-0037834",
+  #Darnell Mooney
+  "00-0036309",
+  #MarShawn Lloyd
+  "00-0039811",
+  #Najee Harris
+  "00-0036893",
+  #CeeDee Lamb
+  "00-0036358",
+  #Jonathon Brooks
+  "00-0039344",
+  #Jalen McMillan
+  "00-0039855",
+  #Jauan Jennings
+  "00-0036259",
+  #Chuba Hubbard
+  # "00-0036555",
+  #Terry McLaurin
+  "00-0035659"
+  )
+```
+
+score * 0
+```{r}
+suspended <- c(
+  #Rashee Rice
+  "00-0039067"
+)
+```
+
+monitor Joe Flaco vs. Jake Browning for who is starting.
+score * 0
+```{r}
+backup_qbs <- c(
+  #Anthony Richardson
+  "00-0039164",
+  #Jalen Milroe
+  "00-0040673",
+  #Russell Wilson
+  "00-0029263",
+  #Kirk Cousins
+  "00-0029604",
+  #Marcus Mariota
+  "00-0032268",
+  #Tyrod Taylor
+  "00-0028118",
+  #Jake Browning
+  "00-0035100",
+  #Jameis Winston
+  "00-0031503"
+)
+```
+
+
+
+
+This is close but not quite there with adding in user created players. I don't know why it doesn't work to be honest, I need to figure that out. I got an error about columns in the tibble not being the same length. commented everything that I added out and it works as intended that way, so I at least didn't break anything. Going to have to do some investigation though.
 ```{r}
 sim_two <- function(ff, team_1, team_2){
   player_ids_vector <- c()
@@ -216,6 +390,7 @@ sim_two <- function(ff, team_1, team_2){
     select(season, week, full_name, player_id, season_player_id, full_name, position, total_fantasy_points, is.rookie, GP, bucket) %>%
     arrange(full_name)
   
+  #I think I need to filter out my added IDs right here. otherwise, 
   player_lookup <- ff %>%
     distinct(player_id, .keep_all = TRUE) %>%
     select(player_id, position, full_name)
@@ -223,18 +398,26 @@ sim_two <- function(ff, team_1, team_2){
   subset_df <- ff %>%
     filter(player_id %in% c(team_1, team_2)) 
   
-  #could probably add a secondary thing right here.
-  #separate the names that are user generated, put then into a new list
-  #use that list at the end, basically calling the function I already made.
-  #going to need a dataframe with 3 columns: score, position, team. 
-  
-  # Keep only user added player scores
-  # valid_players <- player[grepl("WR,|RB,|TE,|QB,", player)]
-  # valid_players %>% 
-  #   mutate(team)
-  
-  
   ids <- c(team_1, team_2)
+  
+  #keeping user created players
+  user_created_players <- ids[grepl("WR,|RB,|TE,|QB,", ids)]
+  user_created_players <- tibble(raw = user_created_players) %>%
+    mutate(
+      team = ifelse(raw %in% Team_1, "Team 1", "Team 2")
+    ) %>%
+    extract(raw, into = c("position", "score"),
+            regex = "([^,]+), ([0-9]+) pts",
+            convert = TRUE)
+
+
+  
+  #filtering out user created players from ids
+  ids <- ids[!grepl("WR,|RB,|TE,|QB,", ids)]
+  
+  #think this is the line where I'm getting the error. Actually makes a lot of sense. think I need to filter out added players from each individual team as well, not just from ids. that should make this work. something like:
+  team_1 <- team_1[!grepl("WR,|RB,|TE,|QB,", team_1)]
+  team_2 <- team_2[!grepl("WR,|RB,|TE,|QB,", team_2)]
   teams <- c(rep("Team 1", length(team_1)),
            rep("Team 2", length(team_2)))
   
@@ -252,9 +435,6 @@ sim_two <- function(ff, team_1, team_2){
   
   
   for(i in 1:length(ids)){
-    #vector containing generated scores for one individual
-    #think chat cut this too
-    #individual_scores <- c()
     #df with only the one player's stats
     player <- subset_df %>%
       filter(player_id == ids[[i]]) %>%
@@ -263,9 +443,7 @@ sim_two <- function(ff, team_1, team_2){
     is_rookie <- player$is.rookie[1]
     gp_max <- max(player$GP)
 
-    #where if they're a rookie and have played fewer than 12 games, do the weighted quantile stuff, otherwise normal
-    #quantile for said one player
-    #trying this without rookie stuff at all 
+
     
      if(is_rookie && gp_max < 12){
          player_position <- player$position[1]
@@ -300,41 +478,26 @@ sim_two <- function(ff, team_1, team_2){
          player_quantile <- weighted_quantile(
            c(player_scores, position_bucket_scores),
            combined_weights,
-           probs = c(.10, .90)
+           probs = c(.1, .90)
            )
 
      #think I'm going to need one more else if loop here to detect if the player is of added score format.
      } else {
           #changed quantile to just 10th and 90th
-          player_quantile <- quantile(player$total_fantasy_points, probs = c(.075, .875))
+          player_quantile <- quantile(player$total_fantasy_points, probs = c(.075, .9))
       }
     
       #individual_scores <- numeric(15000)
       rng <- runif(n_obs)
       scores <- numeric(n_obs)
       
-          # if(!is_rookie && gp_max < 12){
               lower <- unname(player_quantile[1])
               upper <- unname(player_quantile[2])
               scores[rng < .075] <- lower
-              scores[rng >= .875] <- upper
-              mid_idx <- rng >= .075 & rng < .875
-              scores[mid_idx] <- lower + (rng[mid_idx] - 0.075) * (upper - lower) / 0.8
-         # attempting to just have the 10-90 quantiles.
-         # } else{
-         #    bins <- cut(rng, breaks = c(0, 0.25, 0.5, 0.75, 1), labels = FALSE)
-         #    lower <- unname(player_quantile[bins])
-         #    upper <- unname(player_quantile[bins + 1])
-         #    #Change quantile
-         #    span <- c(0.25, 0.25, 0.25, 0.25)[bins] # segment width
-         #    #Change quantile 
-         #    offset <- c(0.00, 0.25, 0.50, 0.75)[bins] # segment start
-         #    same_val <- upper == lower
-         #    scores[same_val] <- lower[same_val]
-         #    scores[!same_val] <- lower[!same_val] + 
-         #                         (rng[!same_val] - offset[!same_val]) * 
-         #                         (upper[!same_val] - lower[!same_val]) / span[!same_val]
-         # }
+              scores[rng >= .9] <- upper
+              mid_idx <- rng >= .075 & rng < .9
+              scores[mid_idx] <- lower + (rng[mid_idx] - 0.075) * (upper - lower) / 0.825
+
       all_player_scores_list[[i]] <- scores
   } 
 
@@ -355,18 +518,22 @@ sim_two <- function(ff, team_1, team_2){
         case_when(
           player_id %in% decreased_roles ~ score * .35,
           player_id %in% increased_roles ~ score * 1.75,
+          player_id %in% c(backup_qbs, injured, suspended, bye_week) ~ score * 0,
+          player_id %in% bengals ~ score * .8,
+          player_id %in% ravens ~ score * .8,
+          #Chris Godwin, Travis Kelce, Zach Ertz
+          player_id %in% c("00-0033921", "00-0030506", "00-0030061") ~ score * .8,
           TRUE ~ score
         )
     )
         
-    
-  #think right here is where i'll add my call to add player
+  #so clearly this did not have access to the df created inside the function... tough
+  scores <- add_score(user_created_players, scores)
 
   return(scores)
 }
 
 ```
-
 Think this is better for right now. Obviously, really stupid that this is how I'm accounting for the slower pace and less scoring by just shifting what I'm doing, but this is definitely closer to what is happening than we're seeing from my above model. If i was projecting target share/scoring that would definitely help, but this is my patchwork way of fixing that. should really view player projections for this right now too. 
 
 this looks better, gonna have to tweak some of the numbers, specifically the increased_roles one.
@@ -384,164 +551,35 @@ this looks better, gonna have to tweak some of the numbers, specifically the inc
 ```
 
 
-```{r}
-nerfed_sim_two <- function(ff, team_1, team_2){
-  player_ids_vector <- c()
-  all_player_scores_list <- list()
-  ff <- ff %>%
-    select(season, week, full_name, player_id, season_player_id, full_name, position, total_fantasy_points, is.rookie, GP, bucket) %>%
-    arrange(full_name)
-  
-  player_lookup <- ff %>%
-    distinct(player_id, .keep_all = TRUE) %>%
-    select(player_id, position, full_name)
-  
-  subset_df <- ff %>%
-    filter(player_id %in% c(team_1, team_2)) 
-  
-  #could probably add a secondary thing right here.
-  #separate the names that are user generated, put then into a new list
-  #use that list at the end, basically calling the function I already made.
-  #going to need a dataframe with 3 columns: score, position, team. 
-  
-  # Keep only user added player scores
-  # valid_players <- player[grepl("WR,|RB,|TE,|QB,", player)]
-  # valid_players %>% 
-  #   mutate(team)
-  
-  
-  ids <- c(team_1, team_2)
-  teams <- c(rep("Team 1", length(team_1)),
-           rep("Team 2", length(team_2)))
-  
-  player_info <- tibble(player_id = ids, team = teams) %>%
-    left_join(player_lookup, by = "player_id")
-  
-  
-  n_obs <- 15000
-  
-  
-  full_ids <- rep(player_info$player_id, each = n_obs)
-  full_positions <- rep(player_info$position, each = n_obs)
-  full_names <- rep(player_info$full_name, each = n_obs)
-  full_observations <- rep(1:n_obs, length(ids))
-  
-  
-  for(i in 1:length(ids)){
-    #vector containing generated scores for one individual
-    #think chat cut this too
-    #individual_scores <- c()
-    #df with only the one player's stats
-    player <- subset_df %>%
-      filter(player_id == ids[[i]]) %>%
-      arrange(desc(season), desc(week))
-    
-    is_rookie <- player$is.rookie[1]
-    gp_max <- max(player$GP)
 
-    #where if they're a rookie and have played fewer than 12 games, do the weighted quantile stuff, otherwise normal
-    #quantile for said one player
-      if(is_rookie && gp_max < 12){
-          player_position <- player$position[1]
-          player_bucket <- player$bucket[1]
-          
-          #scores from the same position and bucket as the rookie we're looking at
-          position_bucket_scores <- Rookie_database %>% 
-          filter(position == player_position & bucket == player_bucket) %>%
-          pull(total_fantasy_points)
-          
-          #player's individual scores
-          player_scores <- player$total_fantasy_points
-          
-          #number of individual's scores
-          rookie_games <- length(player_scores)
-          #number of just bucket player's scores
-          bucket_games <- length(position_bucket_scores)
-          
-          
-          #This is implementing piecewise function instead to slow down weight of rookie's scores initially
-          #want to change this to 50 after 4 instead, think that would be better. try after week 3 though.
-          if(gp_max < 4){
-            p <- gp_max * .5/4           
-          } else {
-            p <- 0.5 + ((gp_max - 4) / 8) * 0.5
-          }
-          rookie_weights <- rep(p / rookie_games, rookie_games)
-          bucket_weights <- rep((1 - p) / bucket_games, bucket_games)
-          combined_weights <- c(rookie_weights, bucket_weights)
-            
-          #If I change how many quantiles, would have to go right here
-          player_quantile <- weighted_quantile(
-            c(player_scores, position_bucket_scores),
-            combined_weights,
-            #just gotta make these upper and lower bounds a variable, it's obnoxious to change it in so many places
-            probs = c(.05, .85)
-            )
-          
-      # }  else if (!is_rookie & gp_max < 12){
-      #       
-      #       #think I'm going to need one more else if loop here to detect if the player is of added score format.
-      } else {
-          #changed quantile to just 10th and 90th
-          player_quantile <- quantile(player$total_fantasy_points, probs = c(.05, .85))
-      }
-    
-      #individual_scores <- numeric(15000)
-      rng <- runif(n_obs)
-      scores <- numeric(n_obs)
-      
-          # if(!is_rookie && gp_max < 12){
-              lower <- unname(player_quantile[1])
-              upper <- unname(player_quantile[2])
-              scores[rng < .05] <- lower
-              scores[rng >= .85] <- upper
-              mid_idx <- rng >= .05 & rng < .85
-              scores[mid_idx] <- lower + (rng[mid_idx] - 0.05) * (upper - lower) / 0.8
-
-      all_player_scores_list[[i]] <- scores
-  } 
-
-  
-  
-  scores <- tibble(
-    observation = full_observations,
-    player_id = full_ids,
-    team = rep(player_info$team, each = n_obs),
-    score = unlist(all_player_scores_list),
-    full_name = full_names,
-    position = full_positions
-  )
-  
-  #think right here is where i'll add my call to add player
-
-  return(scores)
-}
-```
 #adding players update, two teams
 Think I don't want to combine optimize and this. Think I'd just wanna do optimize_teams(add_player()) instead
 This is so close to being nice, but I might need them to add a player name or something. Like if you add two WRs right now to the same team, it's gonna break if they both should hit your lineup. How can I make it so that each time you hit this button, it just increases the player_id number? 
 
-ChatGPT vectorized version
+ChatGPT vectorized version, IT WORKS!!
 ```{r}
-add_score <- function(user_score, user_position, user_team, scores) {
-  n <- length(user_score)
-  
-  observation <- seq_len(15000)          # stays same size as your original
-  fake_id <- as.character(-sample.int(1e9, n))  # one id per row
-  
-  temp <- tibble(
-    player_id = fake_id,
-    score     = user_score,
-    team      = user_team,
-    full_name = paste0(user_position, ", ", user_score, " pts"),
-    position  = user_position
-  )
-  
-  temp <- cbind(observation, temp)
-  #so this is already going to have access to the df I created in sim_two. That makes sense, don't 100% know if that'll work or not.
-  scores <- bind_rows(scores, temp)
-  
-  return(scores)
+#helper function for sim_two()
+#user_created_players is a dataframe containing a player input by user of shiny app. contains score, position, and which team
+#the player is on
+#the function returns scores with the user_created_players added on.
+add_score <- function(user_created_players, scores) {
+  n <- length(user_created_players$score)
+  if(n > 0){
+    observation <- seq_len(15000)          # stays same size as your original
+    fake_id <- as.character(-sample.int(1e9, n))  # one id per row
+    
+    temp <- tibble(
+      player_id = fake_id,
+      score     = user_created_players$score,
+      team      = user_created_players$team,
+      full_name = paste0(user_created_players$position, ", ", user_created_players$score, " pts"),
+      position  = user_created_players$position
+    )
+    
+    temp <- cbind(observation, temp)
+    scores <- bind_rows(scores, temp)
+  }
+    return(scores)
 }
 ```
 
@@ -552,27 +590,23 @@ Workflow: Run both chunks where I have commented in the top of sim_two(). Then n
 *IMPORTANT*
 team1[!grepl("WR,|RB,|TE,|QB,", team1)] - Code to run on team1 and team2 to remove user added stuff. 
 
-```{r}
-  #Keep only user added player scores from ids vectors
-  user_added_players <- as_tibble(c(team1, team2)[grepl("WR,|RB,|TE,|QB,", c(team1, team2))])
-  #add teams to df, this should be what I can pass to add_scores
-  user_added_players <- user_added_players %>%
-    mutate(
-      team = ifelse(value %in% team1, "Team 1", "Team 2")
-      )
-```
 
 ChatGPT vectorized version.
+df <- df[, c(3, 1, 2)]
+This line of code reorders columns by index (df now is column 3, then 1, then 2). Will need to do this before I try and join the user added one and the one I create in sim v2
 ```{r}
-user_added_players <- tibble(raw = valid_players) %>%
+#keeping user created players
+user_created_players <- ids[grepl("WR,|RB,|TE,|QB,", ids)]
+user_created_players <- tibble(raw = user_created_players) %>%
   mutate(
     team = ifelse(raw %in% Team_1, "Team 1", "Team 2")
   ) %>%
-  extract(raw, into = c("position", "points"),
+  extract(raw, into = c("position", "score"),
           regex = "([^,]+), ([0-9]+) pts",
           convert = TRUE)
 
-user_added_players
+#filtering out user created players from ids
+ids <- ids[!grepl("WR,|RB,|TE,|QB,", ids)]
 ```
 
 
@@ -719,6 +753,8 @@ optimal %>%
 name_list is the players and ids in the same df. Think this is going to need to be a global variable. Want to be able to use this right away when people input teams. 
 
 need to pass vector of names, pull ids, then do the same stuff. think that's easier. going to have to change the UI to include roster, have it be clickable as well.
+
+I want to make this take a vector of player names, not just one player name. If you click 5 ppl and try to remove them all at once, that should work. 
 ```{r}
 #this is something I'm going to need for all the dropdowns as well. Might have to use match, idek how it's all going to work tbh. Need you to be able to input a player name from a dropdown and then have my ish switch to a player_id instead.
 remove_player <- function(player_name){
@@ -861,69 +897,68 @@ names_and_ids %>%
 ```
 
 #teams
-Left out Coker (IR) ("00-0039491"), MarShawn Lloyd, IR ("00-0039811"), Dillon Gabriel, not playing ("00-0040704"), jayden reed IR (00-0039146"), Keaton mitchell (not playing, 00-0038454"), Jarquez Hunter (not playing), Charbonnet (hurt, "00-0039165")
+Jarquez Hunter (not playing) 
 ```{r}
-Team_Stanton <- c("00-0036389", "00-0039893", "00-0038543", "00-0037809", "00-0036912", "00-0037816", "00-0036264", "00-0040734", "00-0040676", "00-0040126", "00-0037545", "00-0040663", "00-0034270", "00-0040648", "00-0038951", "00-0040131", "00-0040138", "00-0039798")
+Team_Stanton <- c("00-0036389", "00-0039893", "00-0038543", "00-0037809", "00-0036912", "00-0037816", "00-0036264", "00-0040734", "00-0040676", "00-0040126", "00-0037545", "00-0040663", "00-0040648", "00-0038951", "00-0040131", "00-0040138", "00-0039798", "00-0039491", "00-0039811", "00-0039146", "00-0040719", "00-0040704", "00-0038797", "00-0038454")
 ```
 
-Left out Jaylen Wright, IR ("00-0039874"), Riley Leonard (not gonna play, , "1-R-QB5"), JJ McCarthy (hurt, "00-0039923")
+
 ```{r}
-Team_Johnson <- c("00-0039732", "00-0036555", "00-0040242", "00-0036322", "00-0039337", "00-0038933", "00-0037740", "00-0039894", "00-0035710", "00-0039376", "00-0039901", "00-0038935", "00-0036139", "00-0040739", "00-0039868", "00-0032950", "00-0039424", "00-0040729", "00-0039912", "00-0040715", "00-0040242", "00-0033955")
+Team_Johnson <- c("00-0039732", "00-0036555", "00-0040242", "00-0036322", "00-0039337", "00-0038933", "00-0037740", "00-0039894", "00-0035710", "00-0039376", "00-0039901", "00-0038935", "00-0036139", "00-0040739", "00-0039868", "00-0032950", "00-0033662", "00-0040729", "00-0040715", "00-0040242", "00-0039874", "00-0039923", "00-0038611", "00-0040078", "00-0033246", "00-0037004")
 ```
 
-Left out jimmy g, jordan addison, Tank Dell (00-0038977), Kendrick Bourne (not on team, 00-0033307), "00-0039384" (tracey injured)
+
 ```{r}
-Team_Snyder <- c("00-0034857", "00-0040122", "00-0038134", "00-0035676", "00-0036410", "00-0039338", "00-0039064", "00-0034796", "00-0037228", "00-0036997", "00-0034829", "00-0036970", "00-0036626", "00-0040735", "00-0037291", "00-0040669", "00-0035644", "00-0039355", "00-0033307", "00-0038705", "00-0040189", "00-0038994")
+Team_Snyder <- c("00-0034857", "00-0040122", "00-0038134", "00-0035676", "00-0036410", "00-0039338", "00-0039064", "00-0034796", "00-0037228", "00-0036997", "00-0034829", "00-0036970", "00-0036626", "00-0040735", "00-0040669", "00-0035644", "00-0039355", "00-0038705", "00-0040189", "00-0038994", "00-0032385", "00-0038977", "00-0039384", "00-0038440", "00-0039410")
 ```
 
-Deleted Burrow ("00-0036442"), added Jake Browning, Left off Aiyuk
+
 ```{r}
-Team_Kloth <- c("00-0036442", "00-0038542", "00-0038597", "00-0034775", "00-0031408", "00-0036252", "00-0035229", "00-0039040", "00-0038120", "00-0034855", "00-0030565", "00-0037239", "00-0038996", "00-0030279", "00-0038608", "00-0033110", "00-0036875", "00-0037664", "00-0038117", "00-0040170", "00-0038563", "00-0031544", "00-0035100", "00-0030035")
+Team_Kloth <- c("00-0036442", "00-0038542", "00-0038597", "00-0034775", "00-0031408", "00-0036252", "00-0035229", "00-0039040", "00-0038120", "00-0034855", "00-0030565", "00-0037239", "00-0038996", "00-0030279", "00-0038608", "00-0036875", "00-0037664", "00-0038117", "00-0040170", "00-0038563", "00-0035100", "00-0030035", "00-0038606", "00-0036261", "00-0037005")
 ```
 
 Leaving out ARich, milroe, kirk add them back in if they play
 need to change Roman Wilson, JJ McCarthy rookie years to now for calculation purposes. 
 
-left out milroe ("00-0040673"), gabe davis ("00-0036196"), russell wilson ("00-0029263"), najee ("00-0036893"), ceedee ("00-0036358")
+left out milroe ("00-0040673"), 
 ```{r}
-Team_Weiner <- c("00-0033077", "00-0033906", "00-0036158", "00-0036407", "00-0030506", "00-0036613", "00-0036973", "00-0026498", "00-0034869", "00-0030061", "00-0037525", "00-0033923", "00-0033858", "00-0039794",  "00-0040164", "00-0038393")
+Team_Weiner <- c("00-0033077", "00-0033906", "00-0036158", "00-0036407", "00-0030506", "00-0036613", "00-0036973", "00-0026498", "00-0034869", "00-0030061", "00-0037525", "00-0033923", "00-0033858", "00-0039794", "00-0040164", "00-0038393", "00-0038555", "00-0033293", "00-0036893", "00-0036358", "00-0029263", "00-0038124", "00-0029604", "00-0039164")
 ```
 
-Left Joe Milton out, need to make last year his rookie year in All Players Database. Left out Winston, Malachi Corley too
+FIGURE OUT JOE MILTON. Malachi Corley too
 Roschon (00-0039021)
 ```{r}
-Team_Chesney <- c("00-0039163", "00-0034791", "00-0034827", "00-0037240", "00-0036290", "00-0039916", "00-0037247", "00-0038979", "00-0040130", "00-0030564", "00-0039793", "00-0033282", "00-0034159", "00-0037666", "00-0033375", "00-0034407", "00-0037741", "00-0036328", "00-0036182", "00-0033857", "00-0037539")
+Team_Chesney <- c("00-0039163", "00-0034791", "00-0034827", "00-0037240", "00-0036290", "00-0039916", "00-0037247", "00-0038979", "00-0040130", "00-0030564", "00-0039793", "00-0033282", "00-0034159", "00-0037666", "00-0033375", "00-0034407", "00-0037741", "00-0036328", "00-0036182", "00-0033857", "00-0037539", "00-0031503", "00-0039920", "00-0039021")
 ```
 
- jalen mcmilaln, Quinn Ewers, Jonothan Brooks (IR), MARIOTA IN LINEUP
+Quinn Ewers, JIMMY HORN, shough, mullings (haven't played)
 ```{r}
-Team_Hamm <- c("00-0036355", "00-0040198", "00-0038551", "00-0040667", "00-0039065", "00-0039356", "00-0038621", "00-0036550", "00-0036988", "00-0040581", "00-0039751", "00-0039144", "00-0040644", "00-0040134", "00-0039890", "00-0040009", "00-0038104", "00-0039907", "00-0040582")
+Team_Hamm <- c("00-0036355", "00-0040198", "00-0038551", "00-0040667", "00-0039065", "00-0039356", "00-0038621", "00-0036550", "00-0036988", "00-0040581", "00-0039751", "00-0039144", "00-0040644", "00-0040134", "00-0039890", "00-0040009", "00-0038104", "00-0039907", "00-0040582", "00-0039344", "00-0039855")
 ```
 
-Left off Sheduer (not gonna play), tyrod taylor ("00-0028118") added him because fields was hurt ("00-0036945"), guerrendo ("00-0039363")
+Left off Sheduer (not gonna play),
 ```{r}
-Team_Downing <- c("00-0033873", "00-0033280", "00-0036223", "00-0036900", "00-0035659", "00-0033885", "00-0037248", "00-0034348", "00-0026158", "00-0039917", "00-0031381", "00-0034837", "00-0037197", "00-0036275", "00-0034753", "00-0033881", "00-0034975", "00-0036637", "00-0038544", "00-0032392", "00-0040782", "00-0039363", "00-0037112")
+Team_Downing <- c("00-0033873", "00-0033280", "00-0036223", "00-0036900", "00-0033885", "00-0037248", "00-0034348", "00-0026158", "00-0039917", "00-0031381", "00-0034837", "00-0037197", "00-0036275", "00-0034753", "00-0033881", "00-0034975", "00-0036637", "00-0038544", "00-0040782", "00-0039363", "00-0037112", "00-0036945", "00-0035659", "00-0028118")
 ```
 
-Left off Judkins (not with team), spears (IR), Likely (not playing, hurt), Daniels (hurt, "00-0039910")
+
 ```{r}
-Team_Lindsay <- c("00-0039361", "00-0039915", "00-0034351", "00-0037261", "00-0036894", "00-0039851", "00-0023459", "00-0040718", "00-0039342", "00-0038976", "00-0039921", "00-0040179", "00-0039875", "00-0039880", "00-0039746", "00-0040208", "00-0040784", "00-0037238", "00-0039910")
+Team_Lindsay <- c("00-0039361", "00-0039915", "00-0034351", "00-0037261", "00-0036894", "00-0039851", "00-0023459", "00-0040718", "00-0039342", "00-0038976", "00-0039921", "00-0040179", "00-0039875", "00-0039880", "00-0039746", "00-0040208", "00-0040784", "00-0037238", "00-0039032", "00-0037838", "00-0039910", "00-0035250", "00-0040184", "00-0037267", "00-0040586")
 ```
 
-Left off Rashee Rice (suspended), Jaxson Dart (not playing), will howard (IR), Jalen Royals (out)
+will howard (IR), Jalen Royals (out)
 ```{r}
-Team_Klein_Diel <- c("00-0039150", "00-0039139", "00-0040666", "00-0036554", "00-0040124", "00-0040128", "00-0040129", "00-0039849", "00-0039918", "00-0040730", "00-0040162", "00-0039847", "00-0040142", "00-0040736", "00-0040584", "00-0040236", "00-0037801", "00-0035662", "00-0040727", "00-0035208", "00-0035208", "00-0037617", "1-R-QB3")
+Team_Klein_Diel <- c("00-0039150", "00-0039139", "00-0040666", "00-0036554", "00-0040124", "00-0040128", "00-0040129", "00-0039849", "00-0039918", "00-0040730", "00-0040162", "00-0039847", "00-0040142", "00-0040736", "00-0040236", "00-0037801", "00-0035662", "00-0040727", "00-0035208", "00-0035208", "00-0035535", "00-0040691", "00-0039067", "00-0039391")
 ```
 
-Left out mixon, godwin (IR for both), should delete BRob, james connor, terrance ferguson (not playing, ""1-R-TE2"), aaron jones (IR, 00-0033293"), Devin Neal and James jordan (not playing, "1-R-RB5", "1-R-RB4"), george kittle (hurt, 00-0033288")
-james conner ("00-0033553")
+TERRANCE FERGUSON NOT IN DF, SHOULD BE (not playing, ""1-R-TE2")
 ```{r}
-Team_Wu <- c("00-0035228", "00-0035261", "00-0039075", "00-0037744", "00-0033040", "00-0036971", "00-0036212", "00-0035719", "00-0035685", "00-0034960", "00-0037267", "00-0031588", "00-0038555", "00-0034383", "00-0037263", "00-0037746", "00-0040719", "00-0035700", "00-0038997")
+Team_Wu <- c("00-0035228", "00-0035261", "00-0039075", "00-0037744", "00-0033040", "00-0036971", "00-0036212", "00-0035719", "00-0035685", "00-0034960", "00-0031588", "00-0034383", "00-0037263", "00-0037746", "00-0035700", "00-0038997", "00-0039165", "00-0033553", "00-0033288", "00-0033921", "00-0033897", "00-0031610", "00-0033307", "00-0033357")
 ```
 
-Left out Shough, purdy (hurt, "00-0037834"), added mac jones ("00-0036972), left out jauan jennings (injury, ""00-0036259"), mariota (""00-0032268"), darren waller "00-0031610"
+Left off Gus Edwards (not on an NFL roster)
 ```{r}
-Team_McClowry <- c("00-0034844", "00-0032764", "00-0036963", "00-0035640", "00-0038041", "00-0037840", "00-0033908", "00-0033106", "00-0036919", "00-0039919", "00-0038129", "00-0036309", "00-0033090", "00-0036040", "00-0037837", "00-0037256", "00-0040583", "00-0039066", "00-0039066", "00-0035243", "00-0037834", "00-0036259")
+Team_McClowry <- c("00-0034844", "00-0032764", "00-0036963", "00-0035640", "00-0038041", "00-0037840", "00-0033908", "00-0033106", "00-0036919", "00-0039919", "00-0038129", "00-0036309", "00-0033090", "00-0036040", "00-0037837", "00-0037256", "00-0040583", "00-0039066", "00-0039066", "00-0037834", "00-0036259", "00-0036924", "00-0036972", "00-0039738", "00-0037617")
 ```
 
 ```{r}
@@ -931,10 +966,10 @@ Rookie_team <- c("00-0040126", "00-0040128", "00-0040129", "00-0040676", "00-004
 ```
 
 ```{r}
-ff %>% filter(player_id %in% Team_Downing) %>% distinct(player_id, .keep_all = TRUE) %>% view()
+ff %>% filter(player_id %in% Team_Kloth) %>% distinct(player_id, .keep_all = TRUE) %>% view()
 ```
 
-optimal <- optimize_teams(sim_two(ff, Team_Hamm, Team_Wu))
+optimal <- optimize_teams(sim_two_v2(ff, Team_Hamm, Team_Wu))
 
 ```{r}
 names_and_ids %>%
@@ -942,5 +977,13 @@ names_and_ids %>%
   distinct(player_id, .keep_all = TRUE)
 ```
 
+```{r}
+list(Team_Chesney, Team_Downing)
+```
 
 for some reason, rookie dudes didn't load into ff. gotta see why. 
+
+```{r}
+save(ff, backup_qbs, bye_week, bengals, names_and_ids, decreased_roles, increased_roles, injured, suspended, Team_Chesney, Team_Downing, Team_Hamm, Team_Johnson, Team_Klein_Diel, Team_Kloth, Team_Lindsay, Team_McClowry, Team_Snyder, Team_Stanton, Team_Weiner, Team_Wu, add_player, add_score, clear_all, optimize_teams, sim_two, weighted_quantile, file = "BestBallDfs.RData")
+```
+
