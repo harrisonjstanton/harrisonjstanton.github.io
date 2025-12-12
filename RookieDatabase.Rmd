@@ -27,10 +27,12 @@ extra_zeros$week <- NA
 ```
 
 Players drafted in rookie drafts 2015-2024
+10/8
+Rerun this and All Players so I can get Terrance ferguson, jimmy horn
 ```{r}
 ADP_data <- read_csv("Rookies drafted 2015-2025 - Sheet1.csv") %>%
   rename(full_name = Name)
-ADP_data <- rbind(ADP_data, c("Dillon Gabriel", "QB", "2025"), c("Chimere Dike", "WR", "2025"), c("Oronde Gadsden II", "TE", "2025"), c("Arian Smith", "WR", "2025"))
+ADP_data <- rbind(ADP_data, c("Dillon Gabriel", "QB", "2025"), c("Chimere Dike", "WR", "2025"), c("Oronde Gadsden II", "TE", "2025"), c("Arian Smith", "WR", "2025"), c("Brashard Smith", "RB", "2025"), c("Terrance Ferguson", "TE", "2025"), c("Jimmy Horn Jr.", "WR", "2025"), c("Tyler Shough", "QB", "2025"))
 ```
 
 
@@ -76,21 +78,16 @@ rookies <- load_draft_picks() %>%
 
 #Adding gsis id to rookies
 Guys who haven't played that I need to add: 
-Jaxson Dart - add
-Quinshon Judkins - add
 Tyler Shough
 Terrance Ferguson
 Pat Bryant
-Dillon Gabriel - add
 Tai Felton
 Chimere Dike (not rostered in our league, don't really care)
-arian smith - add
 Jarquez Hunter
 Jalen Royals
 Jaydon Blue
 Brashard Smith
 Shedeur Sanders
-Tory Horton - add
 Tahj brooks
 Devin Neal
 
@@ -191,7 +188,8 @@ Rookie_database <- Rookie_database %>%
 ```{r}
 Rookie_database <- Rookie_database %>%
   mutate(
-    total_fantasy_points = if_else(position == "TE", total_fantasy_points + 0.5 * receptions, total_fantasy_points)
+    total_fantasy_points = if_else(position == "TE", total_fantasy_points + 0.5 * receptions, total_fantasy_points),
+    total_fantasy_points = total_fantasy_points + 1 * pass_interception
   )
 ```
 
@@ -224,6 +222,8 @@ Rookie_database <- Rookie_database %>%
 Rookie_database <- Rookie_database %>%
   select(season,
      week, 
+     #added this
+     posteam,
      full_name,
      player_id,
      season_player_id,
@@ -352,6 +352,7 @@ Going to have to change all of these 6s to 5s, then the 36 below to 30, 25, 25, 
 df <- tibble::tibble(
   season = c(rep(0, 105)),
   week = c(rep(0, 105)),
+  posteam = NA,
   full_name = updated_full_name,
   player_id = updated_ids,
   season_player_id = paste0(season, " ", player_id),

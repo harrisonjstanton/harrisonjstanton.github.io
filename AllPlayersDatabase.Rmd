@@ -47,9 +47,11 @@ for(i in 2015:2025){
 ```{r}
 All_Players_Database <- All_Players_Database %>%
   mutate(
-    total_fantasy_points = if_else(position == "TE", total_fantasy_points + 0.5 * receptions, total_fantasy_points)
+    total_fantasy_points = if_else(position == "TE", total_fantasy_points + 0.5 * receptions, total_fantasy_points),
+    total_fantasy_points = total_fantasy_points + 1 * pass_interception
   )
 ```
+
 
 ```{r}
 All_Players_Database <- All_Players_Database %>%
@@ -106,6 +108,7 @@ Going to have to change all of these 6s to 5s, then the 36 below to 30, 25, 25, 
 df <- tibble::tibble(
   season = c(rep(0, 105)),
   week = c(rep(0, 105)),
+  posteam = NA,
   full_name = updated_full_name,
   player_id = updated_ids,
   season_player_id = paste0(season, " ", player_id),
@@ -118,6 +121,7 @@ df <- tibble::tibble(
 All_Players_Database <- All_Players_Database %>%
   select(season,
      week, 
+     posteam,
      full_name,
      player_id,
      season_player_id,
