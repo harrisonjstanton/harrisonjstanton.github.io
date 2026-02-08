@@ -103,7 +103,7 @@ for(i in 1:length(full_names)){
 }
 ```
 
-Going to have to change all of these 6s to 5s, then the 36 below to 30, 25, 25, 25, the 126 at the start to 105
+
 ```{r}
 df <- tibble::tibble(
   season = c(rep(0, 105)),

@@ -77,20 +77,6 @@ rookies <- load_draft_picks() %>%
 ```
 
 #Adding gsis id to rookies
-Guys who haven't played that I need to add: 
-Tyler Shough
-Terrance Ferguson
-Pat Bryant
-Tai Felton
-Chimere Dike (not rostered in our league, don't really care)
-Jarquez Hunter
-Jalen Royals
-Jaydon Blue
-Brashard Smith
-Shedeur Sanders
-Tahj brooks
-Devin Neal
-
 ```{r}
 rookies <- rookies %>%
   mutate(
@@ -240,10 +226,6 @@ Rookie_database <- Rookie_database %>%
 ```
 
 #Adding buckets to df without temp so i don't get error when rejoining
-UPDATED 7/22
-I still need to redo these buckets. Somewhere (draftbuckets.rmd? i redid these in a better way, need to shrink bucket sizes, especially for QB and TE)
-
-Going to have to redo these as well once I look at the numbers/position breakdowns for rookies actually drafted in dynasty drafts
 ```{r}
 Rookie_database <- Rookie_database %>%
     mutate(
@@ -299,8 +281,6 @@ Rookie_database <- Rookie_database %>%
 
 
 #added as of 8/21
-
-
 6 of each, 1 be generic, the rest be -1 or -2
 code to make the necessary generic buckets
 ```{r}
