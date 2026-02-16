@@ -5,7 +5,7 @@ date: "2026-02-08"
 output: html_document
 ---
 
-NOTE: If you visited my portfolio and are attempting to run this code, RData and CSV files that are necessary are stored in my GitHub. You can find a link to that from my portolio website by clicking the GitHub icon.
+NOTE: If you visited my portfolio and are attempting to run this code, RData and CSV files that are necessary are stored in my GitHub (All_Players_Database.RData, RookieDatabase.RData). You can find a link to that from my portolio website by clicking the GitHub icon.
 
 ```{r, message=FALSE}
 library(tidyverse)
@@ -844,7 +844,6 @@ sim_two <- function(ff, team_1, team_2){
 
 
          #This is implementing piecewise function instead to slow down weight of rookie's scores initially
-         #Messing with this quite a bit
         if(gp_max < 8){
            p <- .8
          } else {
@@ -908,7 +907,7 @@ sim_two <- function(ff, team_1, team_2){
         )
     )
         
-  #so clearly this did not have access to the df created inside the function... tough
+
   scores <- add_score(user_created_players, scores)
 
   return(scores)
