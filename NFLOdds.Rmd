@@ -1,0 +1,138 @@
+---
+title: "NFL Odds"
+author: "Harrison Stanton"
+date: "2026-03-03"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(rsconnect)
+library(kableExtra)
+library(nflfastR)
+library(nflreadr)
+```
+
+Progress report 3/13:
+ff_opps is in good shape. I have betting lines and depth chart positioning in the data frame. I need to add the rolling averages. Also should look if there's a way to simplify what I've written so far. I want to utilize different doc than R Markdown, make this as clean as possible. utilize by = c(" ", " ") rather than adding the extra columns. 
+
+Claude had a super valid point, that I should build each player off of the weeks they were on the roster, not the weeks they were in the pbp. This would make someone like Jarquez Hunter have zeros for the whole season instead of looking like he only played in one game. I would have to handle injuries though. That would be quite a workload since those aren't stored anywhere nicely, but that's something I already did quite a bit of last year. I don't think it would be that difficult. (the chat that I'm referring to is stored under the fantasy football model memory tab)
+
+Things I need to do:
+1. write code to compute rolling averages
+2. redo Rookie_Database and All_Players_Database. Need to base this off of weeks on the roster, not weeks in the pbp.
+  *IMPORTANT* Need to filter out injuries and bye weeks. I don't want players to be discounted because of that.
+3. Look more at how to handle rookies. Really good talk with Claude about this on 3/17 in the projects folder, listed under fantasy football model memory
+```{r}
+pbp <- load_pbp(seasons = most_recent_season(), file_type = "rds")
+```
+
+
+Check out claude history on this.
+```{r}
+game_dates <- pbp %>% 
+  select(game_id, game_date, home_team, away_team, season_type) %>%
+  filter(season_type == "REG") %>%
+ # mutate(
+    #basically using this so I can have one column called team_game_id, will keep 2 observations of each ID
+    #team_game_id = paste(game_id, )
+ # )
+  distinct(game_id, .keep_all = TRUE)
+```
+
+```{r}
+game_dates <- game_dates %>%
+  select(game_id, game_date, home_team, away_team) %>%
+  distinct() %>%
+  pivot_longer(cols = c(home_team, away_team),
+               names_to = "home_away",
+               values_to = "team") %>%
+  mutate(
+    team_game_date = paste(game_date, team, sep = " ")
+  )
+
+game_dates$game_date <- as.Date(game_dates$game_date)
+```
+
+
+Seems like spread_line is all in terms of home team.
+If spread_line > 0, then home team is favored. If spread_line < 0, away team is favored
+
+Don't even think I need to add in away projection or home projection. The regression should be able to tease that stuff out since it's all the same numbers. I'm literally adding no new information by including that.
+```{r}
+odds_data <- load_pbp(seasons = most_recent_season(), file_type = "rds") %>% 
+  filter(game_seconds_remaining == 3600) %>% 
+  filter(play_id == 1) %>%
+  select(play_id, game_id, home_team, away_team, season_type, week, away_score, home_score, result, total, spread_line, total_line) %>%
+  mutate(
+    home_proj = (total_line - spread_line) / 2,
+    away_proj = total_line - home_proj
+  )
+```
+
+Doesn't have season_player_id for filtering rookies. Might want to add
+I think this misses QB strip sack fumble points lost. Ex Jordan Love week 4 vs. cowboys. Not the biggest deal, but a little frustrating.
+
+This looks very solid. Have fantasy stats, odds data in one spot. Need to add depth chart by week, then add rolling averages.
+
+```{r}
+ff_opps <- load_ff_opportunity(seasons=most_recent_season()) %>%
+    select(season, week, posteam, game_id, player_id, full_name, position, pass_attempt, pass_yards_gained, pass_touchdown, pass_interception,pass_two_point_conv, receptions, rec_attempt, rec_yards_gained, rec_touchdown, rec_fumble_lost, rec_two_point_conv, rush_attempt, rush_yards_gained, rush_touchdown, rush_two_point_conv, rush_fumble_lost, total_fantasy_points) %>%
+    mutate(
+    total_fantasy_points = if_else(position == "TE", total_fantasy_points + 0.5 * receptions, total_fantasy_points),
+    total_fantasy_points = total_fantasy_points + 1 * pass_interception
+  ) %>%
+  left_join(odds_data %>% select(game_id, spread_line, total_line, away_proj, home_proj), by = "game_id") %>%
+  filter(!is.na(player_id) & position %in% c("RB", "WR", "TE", "QB"))
+
+```
+
+#2025 depth chart
+```{r}
+depth_charts <- load_depth_charts(
+  seasons = most_recent_season(),
+  file_type = getOption("nflreadr.prefer", default = "rds")
+) %>%
+  filter(pos_abb %in% c("WR", "QB", "RB", "TE")) %>%
+  mutate(
+    date = as.Date(dt, tz = "America/New_York"),
+    team_game_date = paste(date, team, sep = ' ')
+  )
+```
+
+Hoping to get position rank by week to ff opps
+```{r}
+depth_charts <- depth_charts %>%
+  #filter to just dates where they played a game.
+  filter(depth_charts$team_game_date %in% game_dates$team_game_date) %>%
+  select(date, team, player_name, gsis_id, pos_abb, pos_rank, team_game_date)
+```
+
+```{r}
+ff_opps <- ff_opps %>%
+  left_join(
+    game_dates %>% 
+      select(game_id, game_date, team_game_date) %>%
+      distinct(game_id, .keep_all = TRUE),
+    by = "game_id")
+```
+
+```{r}
+ff_opps <- ff_opps %>%
+  left_join(depth_charts %>% select(date, gsis_id, pos_rank), by = c("game_date" = "date", "player_id" = "gsis_id"))
+```
+
+```{r}
+ff_opps <- ff_opps %>%
+  mutate(
+    position_rank = paste0(position, pos_rank)
+  )
+```
+
+FF opps is in great shape for 2025 season. Roster stuff is stored differently from 2015-2024. Shouldn't be too bad to figure out to be honest because it's stored cleaner as week/season rather than every day. However, will be harder to make all players database and rookie database.
+
+```{r}
+
+```
+

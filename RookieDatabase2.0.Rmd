@@ -1,0 +1,263 @@
+---
+title: "Rookie_Database_2.0"
+author: "Harrison Stanton"
+date: "2026-03-17"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(rsconnect)
+library(kableExtra)
+library(nflfastR)
+library(nflreadr)
+```
+
+```{r}
+load("NFLOdds.RData")
+```
+
+Code to test for rolling averages:
+df <- df %>%
+  arrange(player_id, season, week) %>%
+  group_by(player_id, season) %>%
+  mutate(
+    games_played = row_number(),
+    rush_yds_season_avg = lag(cummean(rush_yds))
+  ) %>%
+  ungroup() %>%
+  group_by(player_id) %>%
+  mutate(
+    rush_yds_last4_avg = lag(rollapply(rush_yds, width = 4, FUN = mean, fill = NA, align = "right"))
+  )
+  
+Basically would want to add this for all stats I was hoping to take means of 
+  
+Another idea from Claude that is a good one: 
+1. add GP as a feature, don't have the NAs if someone doesn't hit the games limit. 
+
+#2015-2024 depth chart work
+The nice thing about 2015-2024 though is that I don't need to use date for anything. I only used it in 2025 to join odds data because 2025 didn't have week or game day or anything like that, it was just showing a new roster for every single day. 
+```{r}
+depth_charts <- load_depth_charts(
+  seasons = 2015:2024,
+  file_type = getOption("nflreadr.prefer", default = "rds")
+) %>%
+  filter(position %in% c("WR", "QB", "RB", "TE") & formation == "Offense") %>%
+  distinct(gsis_id, season, week, .keep_all = TRUE) %>%
+  select(season, club_code, week, full_name, gsis_id, position, depth_team)
+```
+
+
+```{r}
+depth_charts <- depth_charts %>%
+  rename("team"= "club_code" , "pos_rank" = "depth_team" )
+```
+
+```{r}
+lookup <- bind_rows(
+  odds_data %>% select(game_id, week, season, team = home_team),
+  odds_data %>% select(game_id, week, season, team = away_team)
+)
+```
+
+```{r}
+depth_charts <- depth_charts %>%
+  left_join(lookup, by = c("team", "week", "season"))
+```
+
+
+```{r}
+ADP_data <- read_csv("Rookies drafted 2015-2025 - Sheet1.csv")
+ADP_data <- rbind(ADP_data, c("Dillon Gabriel", "QB", "2025"), c("Chimere Dike", "WR", "2025"), c("Oronde Gadsden II", "TE", "2025"), c("Arian Smith", "WR", "2025"), c("Brashard Smith", "RB", "2025"), c("Terrance Ferguson", "TE", "2025"), c("Jimmy Horn Jr.", "WR", "2025"), c("Tyler Shough", "QB", "2025"))
+```
+
+#2025+ depth chart work
+```{r}
+pbp <- load_pbp(seasons = 2025, file_type = "rds")
+```
+
+```{r}
+depth_charts_25 <- load_depth_charts(
+  seasons = 2025,
+  file_type = getOption("nflreadr.prefer", default = "rds")
+) %>%
+  filter(pos_abb %in% c("WR", "QB", "RB", "TE")) %>%
+  mutate(
+    date = as.Date(dt, tz = "America/New_York"),
+    team_game_date = paste(date, team, sep = ' ')
+  ) %>%
+  select(date, team_game_date, team, player_name, gsis_id, pos_abb, pos_rank)
+```
+
+```{r}
+game_dates <- pbp %>% 
+  filter(season == 2025 & season_type == "REG") %>%
+  select(game_id, game_date, home_team, away_team, season_type, week) %>%
+  distinct(game_id, .keep_all = TRUE)
+```
+
+```{r}
+game_dates <- game_dates %>%
+  select(game_id, game_date, away_team, home_team, week) %>%
+  distinct() %>%
+  pivot_longer(cols = c(home_team, away_team),
+               names_to = "home_away",
+               values_to = "team") %>%
+  mutate(
+    team_game_date = paste(game_date, team, sep = " "),
+    season = 2025
+  )
+
+game_dates$game_date <- as.Date(game_dates$game_date)
+```
+
+```{r}
+depth_charts_25 <- depth_charts_25 %>%
+  right_join(game_dates %>% select(game_id, team_game_date, season, week), by = "team_game_date")
+```
+
+
+```{r}
+depth_charts_25 <- depth_charts_25 %>%
+  distinct(gsis_id, season, week, .keep_all = TRUE) %>%
+  select(-team_game_date, -date)
+```
+
+```{r}
+depth_charts_25 <- depth_charts_25 %>%
+  rename("full_name" = "player_name", "position" = "pos_abb")
+```
+
+I kind of think I should change the name from all_depth_charts to something a little less confusing. This is my working df, it's not just depth charts anymore. 
+```{r}
+model_data <- depth_charts %>%
+  rbind(depth_charts_25)
+```
+
+```{r}
+model_data <- model_data %>%
+  mutate(
+    season_player_id = paste(season, gsis_id, sep = " ")
+    ) %>%
+  filter(!(season < 2021 & week > 17)) %>%
+  filter(!is.na(game_id))
+```
+
+#Adding odds to model data
+```{r}
+model_data <- model_data %>%
+  left_join(odds_data %>% select(game_id, spread_line, total_line), by = "game_id")
+```
+
+#Adding stats to model data
+If I wanted to do market share, they have team stuff in here too. That honestly isn't the worst thing to at least remember, but I'm not going to include it now. 
+```{r}
+ff <- load_ff_opportunity(seasons = 2015:2025) %>%
+  select(game_id, player_id, full_name, pass_attempt, rec_attempt, rush_attempt, pass_completions, receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rec_touchdown, rush_touchdown, pass_two_point_conv, rush_two_point_conv, rec_two_point_conv, pass_interception, rec_interception, rec_fumble_lost, rush_fumble_lost, total_yards_gained, total_touchdown, total_fantasy_points) %>%
+  filter(!is.na(player_id))
+```
+
+```{r}
+model_data <- model_data %>%
+  left_join(ff %>% select(-full_name), by = c("game_id" = "game_id", "gsis_id" = "player_id"))
+```
+
+```{r}
+model_data <- model_data %>%
+  mutate(across(12:ncol(.), ~replace_na(., 0)))
+```
+Really happy where model_data is at right now. I think one thing I could do to make this a little cleaner is combine some of these fumble/two point/etc columns to one column by just summing across. So for instance, rec_fumble + rush_fumble = fumble
+
+#Injuries to model_data
+```{r}
+injuries <- load_injuries(seasons = 2015:2025) %>%
+  filter(game_type == "REG" & position %in% c("RB", "WR", "TE", "QB")) %>%
+  select(season, team, week, gsis_id, full_name, position, report_status)
+```
+
+```{r}
+model_data <- model_data %>%
+  left_join(injuries %>% select(season, week, gsis_id, report_status), by = c("season", "week", "gsis_id"))
+```
+
+```{r}
+model_data <- model_data %>%
+  mutate(report_status = replace_na(report_status, "Healthy"))
+```
+
+
+Things I want in Rookie_Database2 (this should all fall into place once I get game id into Rookie Database)
+1. spread and total (done)
+2. player stats from game (done)
+3. rolling averages for catches, rushes, points/rush, points/touch (previous weeks)
+
+
+#Filtering for just rookie seasons
+```{r}
+rookies <- load_draft_picks() %>%
+  filter(position %in% c("QB", "WR", "TE", "RB")) %>%
+  filter(season >= 2015) %>%
+  select(season, round, pick, team, gsis_id, pfr_player_name, position)
+```
+
+```{r}
+rookies <- rookies %>% 
+     group_by(gsis_id) %>% 
+     filter(n() == 1)
+```
+
+
+```{r}
+rookies <- rookies %>%
+  mutate(
+    season_player_id = paste(season, gsis_id, sep = " ")
+  )
+```
+
+Save off Rookie and All Players Databases after we answer the three questions I listed out at the top of this page
+```{r}
+Rookie_Database2 <- model_data %>%
+  filter(season_player_id %in% rookies$season_player_id | season_player_id == "2016 00-0032400" | season_player_id == "2016 00-0032974" | season_player_id == "2016 00-0032377" | season_player_id == "2019 00-0035350" | season_player_id == "2019 00-0034960" | season_player_id == "2021 00-0036755" | season_player_id == "2025 00-0040782") %>%
+  arrange(full_name, season, week)
+```
+
+
+
+#Add draft capital/bucket
+```{r}
+Rookie_Database2 <- Rookie_Database2 %>%
+  left_join(rookies %>% select(round, pick, gsis_id), by = "gsis_id")
+```
+
+
+```{r}
+Rookie_Database2 <- Rookie_Database2 %>%
+  mutate(
+    round =
+    case_when(
+      gsis_id == "00-0032400" ~ 4,
+      gsis_id == "00-0032974" ~ 5,
+      is.na(round) ~ 8,
+      TRUE ~ round
+    ),
+    pick =
+      case_when(
+      gsis_id== "00-0032400" ~ 112,
+      gsis_id == "00-0032974" ~ 154,
+      is.na(pick) ~ 300,
+      TRUE ~ pick
+      )
+  )
+```
+
+
+```{r}
+Rookie_Database2 <- Rookie_Database2 %>% 
+  filter(full_name %in% ADP_data$Name) %>%
+  filter(!is.na(week))
+```
+
+
+
