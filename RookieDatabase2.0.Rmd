@@ -184,17 +184,55 @@ model_data <- model_data %>%
 
 ```{r}
 model_data <- model_data %>%
-  mutate(report_status = replace_na(report_status, "Healthy"))
+  mutate(report_status = replace_na(report_status, "Active"))
 ```
 
+#Adding years of experience to model data
+```{r}
+players <- load_players() %>%
+  filter(gsis_id %in% model_data$gsis_id & position %in% c("WR", "RB", "TE", "QB")) %>%
+  select(gsis_id, rookie_season)
+```
+
+```{r}
+model_data <- model_data %>%
+  left_join(players, by = "gsis_id")
+```
+
+```{r}
+model_data <- model_data %>%
+  mutate(
+    experience = season - rookie_season
+  )
+```
+
+#Adding starter injury status
+```{r}
+model_data <- model_data %>%
+  group_by(team, week, season, position) %>%
+  mutate(
+    starter_injury_status = case_when(
+      pos_rank == 1 ~ "Starter",
+      any(report_status[pos_rank == 1] %in% c("Out", "Doubtful")) ~ "Out/Doubtful",
+      any(report_status[pos_rank == 1] == "Questionable") ~ "Questionable",
+      TRUE ~ "Active"
+    )
+  ) %>%
+  ungroup()
+```
 
 Things I want in Rookie_Database2 (this should all fall into place once I get game id into Rookie Database)
 1. spread and total (done)
 2. player stats from game (done)
 3. rolling averages for catches, rushes, points/rush, points/touch (previous weeks)
+4. injuries (done)
+  a. finished adding starter gets injured too
+5. experience (# of years in the league -> do this instead of is.rookie variable) (done)
+ a. Spot check some of these injuries, make sure that I have the pre game status
+6. draft capital/bucket is the last thing I want to add to this besides the rolling averages/game totals
 
 
-#Filtering for just rookie seasons
+#Adding draft capital/buckets to model_data
 ```{r}
 rookies <- load_draft_picks() %>%
   filter(position %in% c("QB", "WR", "TE", "RB")) %>%
@@ -202,6 +240,54 @@ rookies <- load_draft_picks() %>%
   select(season, round, pick, team, gsis_id, pfr_player_name, position)
 ```
 
+```{r}
+rookies <- rookies %>%
+    mutate(
+      bucket = 
+        case_when(
+          position == "WR" & pick < 16 ~ "1",
+          position == "WR" & pick < 33 & pick >= 16 ~ "2",
+          position == "WR" & pick < 66 & pick >= 33 ~ "3",
+          position == "WR" & pick < 100 & pick >= 66 ~ "4",
+          position == "WR" & pick < 170 & pick >= 100 ~ "5",
+          position == "WR" & TRUE ~ "6",
+          position == "RB" & pick < 33 ~ "1",
+          position == "RB" & pick < 66 & pick >= 33 ~ "2",
+          position == "RB" & pick < 100 & pick >= 66 ~ "3",
+          position == "RB" & pick < 180 & pick >= 100 ~ "4",
+          position == "RB" & TRUE ~ "5",
+          position == "TE" & pick < 33 ~ "1",
+          position == "TE" & pick < 95 & pick >= 33 ~ "2",
+          position == "TE" & pick < 120 & pick >= 95 ~ "3",
+          position == "TE" & pick < 155 & pick >= 120 ~ "4", 
+          position == "TE" & TRUE ~ "5",
+          position == "QB" & pick < 10 ~ "1",
+          position == "QB" & pick < 21 & pick >= 10 ~ "2",
+          position == "QB" & pick < 33 & pick >= 21 ~ "3",
+          position == "QB" & pick < 100 & pick >= 33 ~ "4",
+          position == "QB" & TRUE ~ "5"
+        )
+      ) %>%
+  filter(!is.na(gsis_id))
+```
+
+
+```{r}
+model_data <- model_data %>%
+  left_join(rookies %>% select(gsis_id, bucket), by = "gsis_id")
+```
+
+```{r}
+model_data <- model_data %>%
+  mutate(bucket = case_when(
+    !is.na(pick) ~ bucket,
+    rookie_season >= 2015 ~ "undrafted",
+    TRUE ~ "unknown"
+  ))
+```
+
+
+#Filtering for just rookie seasons
 ```{r}
 rookies <- rookies %>% 
      group_by(gsis_id) %>% 
