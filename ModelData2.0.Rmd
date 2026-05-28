@@ -1,0 +1,436 @@
+---
+title: "Model_Data 2.0"
+author: "Harrison Stanton"
+date: "2026-05-27"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(rsconnect)
+library(kableExtra)
+library(nflfastR)
+library(nflreadr)
+library(slider)
+```
+
+```{r}
+load("NFLOdds.RData")
+```
+  
+Another idea from Claude that is a good one: 
+1. Need to think about what the workflow is going to be during the season at some point. Def should finish the model first, but that needs to be a thought. Think I should preload the matchups into a shiny app tbh.
+
+
+
+#2015-2024 depth chart work
+The nice thing about 2015-2024 though is that I don't need to use date for anything. I only used it in 2025 to join odds data because 2025 didn't have week or game day or anything like that, it was just showing a new roster for every single day. 
+```{r, message=FALSE}
+depth_charts <- load_depth_charts(
+  seasons = 2015:2024,
+  file_type = getOption("nflreadr.prefer", default = "rds")
+) %>%
+  filter(position %in% c("WR", "QB", "RB", "TE") & formation == "Offense") %>%
+  arrange(season, club_code, full_name, week) %>%
+  #distinct(gsis_id, season, week, .keep_all = TRUE) %>%
+  distinct(gsis_id, season, week, .keep_all = TRUE) %>%
+  select(season, club_code, week, full_name, gsis_id, position, depth_team)
+```
+
+
+```{r}
+depth_charts <- depth_charts %>%
+  rename("team"= "club_code" , "pos_rank" = "depth_team" )
+```
+
+#Schedules
+I'm going to filter out games from depth_charts that weren't happening using schedules first and see what happens from there
+Can lowkey probably start doing 2026 too
+```{r}
+schedules <- load_schedules(seasons = 2015:2025) %>% 
+  filter(game_type == "REG")
+```
+
+```{r}
+long_schedules <- bind_rows(
+  schedules %>% select(game_id, season, week, gameday, team = home_team),
+  schedules %>% select(game_id, season, week, gameday, team = away_team)
+) %>% 
+  arrange(season, team, week)
+
+long_schedules$gameday <- as.Date(long_schedules$gameday)
+```
+
+To get Game ID to depth charts, filters out bye weeks. 
+```{r}
+depth_charts <- depth_charts %>%
+  right_join(long_schedules %>% select(-gameday), by = c("season", "team", "week"))
+```
+
+
+#2025+ depth chart work
+```{r}
+depth_charts_25 <- load_depth_charts(
+  seasons = 2025,
+  file_type = getOption("nflreadr.prefer", default = "rds")
+) %>%
+  filter(pos_abb %in% c("WR", "QB", "RB", "TE")) %>%
+  mutate(
+    date = as.Date(dt, tz = "America/New_York"),
+  ) %>%
+  select(date, team, player_name, gsis_id, pos_abb, pos_rank)
+```
+
+same process of getting Game IDs, but for 2025
+```{r}
+depth_charts_25 <- depth_charts_25 %>%
+  right_join(long_schedules %>% filter(season == 2025), by = c("date" = "gameday", "team" = "team"))
+```
+
+```{r}
+depth_charts_25 <- depth_charts_25 %>%
+  arrange(season, team, player_name, week) %>%
+  distinct(season, week, gsis_id, .keep_all = TRUE) %>%
+  select(-date)
+```
+
+```{r}
+depth_charts_25 <- depth_charts_25 %>%
+  rename("full_name" = "player_name", "position" = "pos_abb")
+```
+
+
+```{r}
+model_data <- depth_charts %>%
+  rbind(depth_charts_25)
+```
+
+
+
+#Adding odds to model data
+```{r}
+model_data <- model_data %>%
+  left_join(odds_data %>% select(game_id, team, total_line, proj), by = c("game_id", "team"))
+```
+
+
+#Adding stats to model data
+If I wanted to do market share, they have team stuff in here too. That honestly isn't the worst thing to at least remember, but I'm not going to include it now. 
+```{r}
+ff <- load_ff_opportunity(seasons = 2015:2025) %>%
+  select(game_id, player_id, full_name, position, pass_attempt, rec_attempt, rush_attempt, pass_completions, receptions, pass_yards_gained, rec_yards_gained, rush_yards_gained, pass_touchdown, rec_touchdown, rush_touchdown, pass_interception, rec_fumble_lost, rush_fumble_lost, total_yards_gained, total_fantasy_points) %>%
+  filter(!is.na(player_id))
+```
+
+```{r}
+ff <- ff %>%
+  mutate(
+    total_fantasy_points = if_else(position == "TE", total_fantasy_points + 0.5 * receptions, total_fantasy_points),
+    total_fantasy_points = total_fantasy_points + 1 * pass_interception
+  )
+```
+
+```{r}
+ff <- ff %>%
+  mutate(
+    scrimmage_TDs = rec_touchdown + rush_touchdown,
+    fumbles = rec_fumble_lost + rush_fumble_lost,
+  ) %>%
+  select(-rec_touchdown, -rush_touchdown, -rec_fumble_lost, -rush_fumble_lost)
+```
+
+
+I think this step is where stuff gets messed up with McCaffrey and Bennett.
+Still having this problem
+```{r}
+model_data <- model_data %>%
+  left_join(ff %>% select(-full_name, -position), by = c("game_id" = "game_id", "gsis_id" = "player_id"))
+```
+
+
+Really happy where model_data is at right now. I think one thing I could do to make this a little cleaner is combine some of these fumble/two point/etc columns to one column by just summing across. So for instance, rec_fumble + rush_fumble = fumble
+
+#Injuries to model_data
+```{r}
+injuries <- load_injuries(seasons = 2015:2025) %>%
+  filter(game_type == "REG" & position %in% c("RB", "WR", "TE", "QB")) %>%
+  select(season, team, week, gsis_id, full_name, position, report_status)
+```
+
+```{r}
+model_data <- model_data %>%
+  left_join(injuries %>% select(season, week, gsis_id, report_status), by = c("season", "week", "gsis_id"))
+```
+
+#Adding years of experience to model data
+```{r}
+players <- load_players() %>%
+  filter(gsis_id %in% model_data$gsis_id & position %in% c("WR", "RB", "TE", "QB")) %>%
+  select(gsis_id, rookie_season)
+```
+
+```{r}
+model_data <- model_data %>%
+  left_join(players, by = "gsis_id")
+```
+
+```{r}
+model_data <- model_data %>%
+  mutate(
+    experience = season - rookie_season
+  )
+```
+
+```{r}
+model_data <- model_data %>%
+  mutate(across(11:24, ~replace_na(., 0)))
+```
+
+#testing out code for rolling averages, SDs, # of games in sample
+4/11
+This looked sick. I think this is going to work really well. I think I'm going to change rush yards and rec yards to scrimmage yards, then change rush and rec fumbles to just fumbles, etc, to try and eliminate extra columns in my df.
+
+Next steps:
+1. get this rolling averages and SDs added for all features that I deem to be relevant/worthy of testing
+2. collapse down the ff df to try and eliminate some of the superfluous stuff (rush vs. rec fumbles -> fumbles)
+3. When I add the averages and stuff to the whole df, I probably want to select just the stuff that I want afterwards so that my df is smaller and stuff processes correctly
+4. Make sure that NAs are changed to 0s -> quantile regression drops NAs in calculations, don't want that
+5. Drop Backup QB weeks from model data, make sure that backup who starts that week has a change in depth chart in df too.
+(think I need to drop all backup games where starter is completely healthy before I run regression. Think I also should have this so that if the QB1 is active/playing, then QB2 is auto 0)
+
+
+#Current way to get rolling averages
+```{r}
+model_data <- model_data %>%
+  arrange(pos_rank, team) %>%
+  distinct(gsis_id, season, week, .keep_all = TRUE)
+```
+
+#Fixing injury status
+5/11
+This is working as well as it can. This should catch the first week a guy goes to IR if they were a starter, then the 4 game averages will crater. It's not perfect, but since the depth chart also goes way down on those ones too, it should just simulate a dude completely falling off in their career. I don't think this is the biggest deal. It's not perfect, but there's no way to make it better IMO. 
+```{r}
+model_data <- model_data %>%
+  mutate(
+    report_status = case_when(
+      is.na(report_status) ~ "Not Reported",
+      TRUE ~ report_status
+    )
+  ) 
+```
+
+
+```{r}
+model_data <- model_data %>%
+  group_by(team, week, season, position) %>%
+  mutate(
+    starter_injury_status = case_when(
+      pos_rank == 1 ~ "Starter",
+      any(report_status[pos_rank == 1] %in% c("Out", "Doubtful")) ~ "Out/Doubtful",
+      any(report_status[pos_rank == 1] == "Questionable") ~ "Questionable",
+      TRUE ~ "Not Reported"
+    )
+  ) %>%
+  ungroup()
+```
+
+```{r}
+model_data <- model_data %>%
+  filter(report_status != "Out")
+```
+
+#Adding draft capital/buckets to model_data
+```{r}
+rookies <- load_draft_picks() %>%
+  filter(position %in% c("QB", "WR", "TE", "RB")) %>%
+  filter(season >= 2010) %>%
+  select(season, round, pick, team, gsis_id, pfr_player_name, position)
+```
+
+```{r}
+rookies <- rookies %>%
+    mutate(
+      bucket = 
+        case_when(
+          position == "WR" & pick < 16 ~ "1",
+          position == "WR" & pick < 33 & pick >= 16 ~ "2",
+          position == "WR" & pick < 66 & pick >= 33 ~ "3",
+          position == "WR" & pick < 100 & pick >= 66 ~ "4",
+          position == "WR" & pick < 170 & pick >= 100 ~ "5",
+          position == "WR" & TRUE ~ "6",
+          position == "RB" & pick < 33 ~ "1",
+          position == "RB" & pick < 66 & pick >= 33 ~ "2",
+          position == "RB" & pick < 100 & pick >= 66 ~ "3",
+          position == "RB" & pick < 180 & pick >= 100 ~ "4",
+          position == "RB" & TRUE ~ "5",
+          position == "TE" & pick < 33 ~ "1",
+          position == "TE" & pick < 95 & pick >= 33 ~ "2",
+          position == "TE" & pick < 120 & pick >= 95 ~ "3",
+          position == "TE" & pick < 155 & pick >= 120 ~ "4", 
+          position == "TE" & TRUE ~ "5",
+          position == "QB" & pick < 10 ~ "1",
+          position == "QB" & pick < 21 & pick >= 10 ~ "2",
+          position == "QB" & pick < 33 & pick >= 21 ~ "3",
+          position == "QB" & pick < 100 & pick >= 33 ~ "4",
+          position == "QB" & TRUE ~ "5"
+        )
+      ) %>%
+  filter(!is.na(gsis_id))
+```
+
+```{r}
+model_data <- model_data %>%
+  left_join(rookies %>% select(gsis_id, bucket, pick), by = "gsis_id")
+```
+
+```{r}
+model_data <- model_data %>%
+  mutate(bucket = case_when(
+    !is.na(pick) ~ bucket,
+    rookie_season >= 2010 ~ "undrafted",
+    TRUE ~ "unknown"
+  ))
+```
+
+```{r}
+model_data <- model_data %>%
+  filter(report_status != "Out") %>%
+  select(-pick, -rookie_season)
+```
+
+```{r}
+model_data$pos_rank <- as.integer(model_data$pos_rank)
+```
+
+```{r}
+model_data <- model_data %>%
+  filter(!is.na(gsis_id))
+```
+
+
+
+
+```{r}
+# ==============================================================================
+# Data Cleaning — Run Before build_decay_features()
+#
+# Assumes model_data is already loaded in R with the following columns:
+#   gsis_id, season, week, team, full_name, position, pos_rank, game_id,
+#   total_line, proj, pass_attempt, rec_attempt, rush_attempt,
+#   pass_completions, receptions, pass_yards_gained, rec_yards_gained,
+#   rush_yards_gained, pass_touchdown, pass_interception, total_yards_gained,
+#   total_fantasy_points, scrimmage_TDs, fumbles, report_status,
+#   rookie_season, experience, starter_injury_status, bucket
+# ==============================================================================
+ 
+ 
+# ------------------------------------------------------------------------------
+# Step 1: Drop confirmed "Out" players
+# ------------------------------------------------------------------------------
+# Rows where report_status == "Out" represent players who did not play.
+# These are not real football outcomes and should not be trained on.
+ 
+model_data <- model_data %>%
+  filter(report_status != "Out")
+ 
+cat("Rows after dropping Out players:", nrow(model_data), "\n")
+ 
+# ------------------------------------------------------------------------------
+# Step 2: Recode remaining report_status NAs to "Not Reported"
+# ------------------------------------------------------------------------------
+# After dropping confirmed outs, remaining NAs are players with no injury
+# designation — treat as healthy/not reported.
+ 
+model_data <- model_data %>%
+  mutate(report_status = replace_na(report_status, "Not Reported"))
+ 
+cat("Remaining report_status NAs:", sum(is.na(model_data$report_status)), "\n")
+ 
+# ------------------------------------------------------------------------------
+# Step 3: Drop rows where proj is NA
+# ------------------------------------------------------------------------------
+# proj (vegas implied team total) is one of the strongest features.
+# NAs are concentrated in 2015-2019 due to data sourcing gaps (~3% of rows).
+# Clean data beats imputed data — dropping is preferable to making up numbers.
+ 
+model_data <- model_data %>%
+  filter(!is.na(proj))
+ 
+cat("Rows after dropping proj NAs:", nrow(model_data), "\n")
+ 
+# ------------------------------------------------------------------------------
+# Step 4: Impute experience NAs to 0
+# ------------------------------------------------------------------------------
+# NAs in experience are sourcing gaps for specific players in nflfastR.
+# These are mostly obscure players where decay features carry the signal.
+# Zero is an explicit "unknown" sentinel — games_of_data correctly reflects
+# that these players do have history, so the model isn't flying blind.
+ 
+model_data <- model_data %>%
+  mutate(experience = replace_na(experience, 0))
+ 
+cat("Remaining experience NAs:", sum(is.na(model_data$experience)), "\n")
+ 
+ 
+# ------------------------------------------------------------------------------
+# Step 6: Recode and factor bucket
+# ------------------------------------------------------------------------------
+# "unknown" means pre-2015 draft data is unavailable — these are veterans
+# whose draft capital we simply don't have, not undrafted players.
+# Recoded to "pre_2015_vet" to make the distinction explicit.
+#
+# Converted to factor with intentional level ordering so that when
+# model.matrix() encodes dummies later, bucket "1" (elite draft capital)
+# is the reference level and all comparisons are interpretable.
+ 
+model_data <- model_data %>%
+  mutate(
+    bucket = case_when(
+      bucket == "unknown" ~ "pre_2015_vet",
+      TRUE                ~ bucket
+    ),
+    bucket = factor(bucket,
+      levels = c("1", "2", "3", "4", "5", "6",
+                 "undrafted", "pre_2015_vet")
+    )
+  )
+ 
+# ------------------------------------------------------------------------------
+```
+
+```{r}
+save(model_data, 
+     file = "WorkingModelData.RData")
+```
+
+
+
+Replace no injury status with Out if the player had substantial work the weeks before and Not Reported otherwise. Not Reported will consist of healthy players who were completely off the injury report, players on IR who I couldn't perfectly identify (pos_rank shoots down the list when they're on IR, but if they didn't fall inside of the workload guidelines I set up, then I'll still miss them), and depth players with random usage.
+
+This is one of the bigger pain points of the data cleaning process. I noticed this when checking Brock Bowers' injury designation, that when he was placed on IR, his position rank changed from 1 to 4, but his report_status was NA. This is not ideal for modeling purposes, so I tried to find a way to identify players like Brock Bowers, Josh Jacobs, etc, who were injured and didn't play, and filter them out of the training data. It's not as big of a deal in season because I will overwrite players like this with 0 for a projection, but it is important for the training data. It is definitely one I should mention in my report on this iteration of the model, specifically how I set this up to catch a significant number of unidentified IR players, but some fell through the cracks. 
+
+My own Claude chat, which should help provide some perspective on this when writing the report:
+Me: "I think i see 3 of 45 that were mislabeled (when using the filters with 4 g rolling averages). It didn't catch all the same ones as last time either (for instance, the second and third week Aaron Jones was hurt it didn't catch because his rolling 4 game average tanks). Is there a way to better handle that? Like would i basically have to recalculate all their rolling stats because I'll be using rolling stats to identify players on IR, then I'll want to recalc those anyways?"
+
+The Aaron Jones Cascading Problem
+You've identified a real limitation. Week 3 gets caught because his 4g average is still high from before the injury. But by weeks 4 and 5, his 4g average has dropped because the IR weeks are dragging it down, so the filter misses them.
+Yes, you'd theoretically need to iterate — flag week 3, recalculate rolling averages excluding that week, flag week 4, recalculate again, etc. That's technically correct but genuinely complex to implement and probably not worth the engineering effort for what it gains.
+The honest reality is: those later IR weeks have a carries_4g_avg that's already collapsing toward zero on its own. The model seeing those rows will interpret them similarly to a declining player, which isn't catastrophically wrong. It's noise but not systematic bias.
+I'd accept this as a known limitation rather than build a complex iterative solution. Document it and move on.
+
+
+
+
+
+
+BUILD THE MODEL
+
+
+
+```{r}
+save(model_data, 
+     file = "ModelData2.RData")
+```
+
+

@@ -1,0 +1,155 @@
+---
+title: "Quantile Regression attempt"
+author: "Harrison Stanton"
+date: "2026-04-29"
+output: html_document
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(rsconnect)
+library(kableExtra)
+library(nflfastR)
+library(nflreadr)
+library(slider)
+```
+
+```{r}
+load("ModelData.RData")
+```
+
+Something that I should think about in the future is whether to attempt to project target share and rush share. I left it out in this iteration of the model because I would struggle mightily trying to project these things at the start of the season, to the point where I don't even think it would be helpful. However, going forward, I could see how that would be really helpful (like when a player gets injured), and once I become more cracked, I might look to add something like this to the model too. 
+
+Chat with Claude labeled "Quantile regression models for fantasy football scoring" will be INCREDIBLY HELPFUL for this. Continue to use this as a learning opportunity, dive into the under the hood stuff. I don't want to walk out the other side of this with just a cool model, I want to know how and why it works and be able to defend what I did. 
+
+
+Run these tests:
+1. look at josh jacobs from 2025. Make sure injury stuff looks right, windows calculate properly
+2. check out one more TE, WR, QB, make sure scoring adds up/sanity check that
+3. Run checks below. If all of those check out, just move on. There's nothing more I can do.
+
+
+# Check fantasy point distribution makes sense
+Besides playoff games, this looks good.
+- Playoff games are fixed as of 5/11
+```{r}
+model_data %>%
+  filter(position == "TE") %>%
+  summarise(
+    min = min(total_fantasy_points, na.rm = TRUE),
+    median = median(total_fantasy_points, na.rm = TRUE),
+    mean = mean(total_fantasy_points, na.rm = TRUE),
+    max = max(total_fantasy_points, na.rm = TRUE)
+  )
+```
+
+Good
+```{r}
+# Check for duplicate player-game rows
+model_data %>%
+  count(gsis_id, season, week) %>%
+  filter(n > 1)
+```
+
+```{r}
+# Check rolling stats reset correctly between seasons
+model_data %>%
+  filter(gsis_id == "00-0035700", week == 1) %>%
+  select(season, week, total_16g_n, carries_16g_avg, ypc_16g)
+```
+
+```{r}
+#rolling stats still calculate correctly even with injuries
+model_data %>%
+  filter(gsis_id == "00-0040734") %>%
+  arrange(desc(season), desc(week)) %>%
+  view()
+```
+
+Still to do as of 5/11
+Last check, just look at one guy per position, make sure fant numbers line up, stats look right, betting lines look ok, etc.
+
+
+
+Beginning analysis of data (probably should do point above this first, but I'm tired of checking data for tonight)
+```{r}
+# Step 1: Filter to RBs and build chronological game index per player
+rb_data <- model_data %>%
+  filter(position == "RB") %>%
+  arrange(gsis_id, season, week) %>%
+  group_by(gsis_id) %>%
+  mutate(game_num = row_number()) %>%
+  ungroup()
+```
+
+```{r}
+# Step 2: Compute correlation at each lag across all RBs
+max_lag <- 70
+
+lag_cors <- map_dfr(1:max_lag, function(lag) {
+  rb_data %>%
+    group_by(gsis_id) %>%
+    mutate(lagged_pts = dplyr::lag(total_fantasy_points, lag)) %>%
+    ungroup() %>%
+    filter(!is.na(lagged_pts)) %>%
+    summarise(
+      lag = lag,
+      correlation = cor(total_fantasy_points, lagged_pts, use = "complete.obs")
+    )
+})
+```
+
+```{r}
+# Step 3: Plot
+ggplot(lag_cors, aes(x = lag, y = correlation)) +
+  geom_point() +
+  geom_line() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_x_continuous(breaks = seq(0, 30, by = 2)) +
+  labs(
+    title = "Autocorrelation of RB Fantasy Points by Lag (Games)",
+    x = "Lag (games in the past)",
+    y = "Correlation with current game"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+# Step 2: Autocorrelation on carries instead of fantasy points
+max_lag <- 70
+
+lag_cors_carries <- map_dfr(1:max_lag, function(lag) {
+  rb_data %>%
+    group_by(gsis_id) %>%
+    mutate(lagged_carries = dplyr::lag(rush_attempt, lag)) %>%
+    ungroup() %>%
+    filter(!is.na(lagged_carries)) %>%
+    summarise(
+      lag = lag,
+      correlation = cor(rush_attempt, lagged_carries, use = "complete.obs")
+    )
+})
+```
+
+```{r}
+# Step 3: Plot both on the same chart for easy comparison
+lag_cors_fantasy <- lag_cors %>% mutate(variable = "Fantasy Points")
+lag_cors_carries <- lag_cors_carries %>% mutate(variable = "Carries")
+
+bind_rows(lag_cors_fantasy, lag_cors_carries) %>%
+  ggplot(aes(x = lag, y = correlation, color = variable)) +
+  geom_point() +
+  geom_line() +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_x_continuous(breaks = seq(0, 30, by = 2)) +
+  labs(
+    title = "Autocorrelation: Fantasy Points vs Carries by Lag",
+    x = "Lag (games in the past)",
+    y = "Correlation with current game",
+    color = NULL
+  ) +
+  theme_minimal()
+```
+

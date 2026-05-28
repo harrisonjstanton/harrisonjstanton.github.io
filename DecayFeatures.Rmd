@@ -1,0 +1,180 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+build_decay_features <- function(df) {
+
+  stat_map <- list(
+    targets       = "rec_attempt",
+    receptions    = "receptions",
+    rec_yards     = "rec_yards_gained",
+    rush_yards    = "rush_yards_gained",
+    rush_att      = "rush_attempt",
+    pass_yards    = "pass_yards_gained",
+    pass_att      = "pass_attempt",
+    pass_comp     = "pass_completions",
+    fantasy_pts   = "total_fantasy_points",
+    pass_tds      = "pass_touchdown",
+    scrimmage_tds = "scrimmage_TDs",
+    fumbles       = "fumbles"
+  )
+
+  df <- df %>% arrange(gsis_id, season, week)
+
+  # --- 3a: Within-season expanding window ---
+
+  compute_player_season_features <- function(player_df) {
+    n_rows <- nrow(player_df)
+    out    <- player_df
+
+    for (stem in names(stat_map)) {
+      for (sfx in c("_fast_avg", "_fast_sd", "_slow_avg", "_slow_sd")) {
+        out[[paste0(stem, sfx)]] <- NA_real_
+      }
+    }
+    out[["eff_n_fast"]]          <- NA_real_
+    out[["eff_n_slow"]]          <- NA_real_
+    out[["games_played_season"]] <- NA_integer_
+
+    for (i in seq_len(n_rows)) {
+      if (i == 1) {
+        out[["games_played_season"]][i] <- 0L
+        next
+      }
+
+      hist_idx <- seq_len(i - 1)
+      out[["games_played_season"]][i] <- length(hist_idx)
+
+      for (stem in names(stat_map)) {
+        raw_col  <- stat_map[[stem]]
+        hist_vec <- player_df[[raw_col]][hist_idx]
+
+        fast <- decay_stats(hist_vec, LAMBDA_FAST)
+        slow <- decay_stats(hist_vec, LAMBDA_SLOW)
+
+        out[[paste0(stem, "_fast_avg")]][i] <- fast$wmean
+        out[[paste0(stem, "_fast_sd" )]][i] <- fast$wsd
+        out[[paste0(stem, "_slow_avg")]][i] <- slow$wmean
+        out[[paste0(stem, "_slow_sd" )]][i] <- slow$wsd
+      }
+
+      fp_fast <- decay_stats(player_df[["total_fantasy_points"]][hist_idx], LAMBDA_FAST)
+      fp_slow <- decay_stats(player_df[["total_fantasy_points"]][hist_idx], LAMBDA_SLOW)
+      out[["eff_n_fast"]][i] <- fp_fast$eff_n
+      out[["eff_n_slow"]][i] <- fp_slow$eff_n
+    }
+    out
+  }
+
+  message("Computing within-season decay features...")
+  df_decay <- df %>%
+    group_by(gsis_id, season) %>%
+    group_modify(~ compute_player_season_features(.x)) %>%
+    ungroup()
+
+  # --- 3b: Cross-season carry-over for Week 1 (veterans only) ---
+  # Explicitly loop over slow columns instead of using cur_column()
+  # to avoid dplyr version compatibility issues
+
+  slow_avg_cols <- names(df_decay)[str_ends(names(df_decay), "_slow_avg")]
+  slow_sd_cols  <- names(df_decay)[str_ends(names(df_decay), "_slow_sd")]
+
+  prior_season_slow <- df_decay %>%
+    group_by(gsis_id, season) %>%
+    filter(week == max(week)) %>%
+    ungroup() %>%
+    mutate(carry_season = season + 1) %>%
+    select(gsis_id, carry_season,
+           all_of(slow_avg_cols), all_of(slow_sd_cols),
+           eff_n_slow) %>%
+    rename_with(~ paste0("prior_", .), -c(gsis_id, carry_season))
+
+  df_decay <- df_decay %>%
+    left_join(prior_season_slow,
+              by = c("gsis_id", "season" = "carry_season"))
+
+  # Fill Week 1 NAs with prior season values column by column
+  for (col in c(slow_avg_cols, slow_sd_cols)) {
+    prior_col <- paste0("prior_", col)
+    df_decay <- df_decay %>%
+      group_by(gsis_id, season) %>%
+      mutate(!!col := if_else(
+        is.na(.data[[col]]) & week == min(week),
+        .data[[prior_col]],
+        .data[[col]]
+      )) %>%
+      ungroup()
+  }
+
+  # Carry forward eff_n_slow for week 1
+  df_decay <- df_decay %>%
+    group_by(gsis_id, season) %>%
+    mutate(
+      eff_n_slow = if_else(
+        is.na(eff_n_slow) & week == min(week),
+        prior_eff_n_slow,
+        eff_n_slow
+      )
+    ) %>%
+    ungroup() %>%
+    select(-starts_with("prior_"))
+
+  # --- 3c: Zero-impute remaining NAs (true rookies, first career game) ---
+
+  message("Zero-imputing NAs for players with no prior history...")
+
+  decay_avg_sd_cols <- names(df_decay)[
+    str_detect(names(df_decay), "_(fast|slow)_(avg|sd)$")
+  ]
+
+  df_decay <- df_decay %>%
+    mutate(
+      across(all_of(decay_avg_sd_cols), ~ replace_na(.x, 0)),
+      eff_n_fast          = replace_na(eff_n_fast, 0),
+      eff_n_slow          = replace_na(eff_n_slow, 0),
+      games_played_season = replace_na(games_played_season, 0L),
+      games_of_data       = pmin(eff_n_slow, 16)
+    )
+
+  # --- 3d: Derived ratio features (nonlinear only) ---
+
+  message("Computing derived ratio features...")
+
+  df_decay <- df_decay %>%
+    mutate(
+      catch_rate_slow    = receptions_slow_avg / pmax(targets_slow_avg,  0.1),
+      ypt_slow           = rec_yards_slow_avg  / pmax(targets_slow_avg,  0.1),
+      ypc_slow           = rush_yards_slow_avg / pmax(rush_att_slow_avg, 0.1),
+      ypa_slow           = pass_yards_slow_avg / pmax(pass_att_slow_avg, 0.1),
+      comp_rate_slow     = pass_comp_slow_avg  / pmax(pass_att_slow_avg, 0.1),
+      catch_rate_fast    = receptions_fast_avg / pmax(targets_fast_avg,  0.1),
+      ypt_fast           = rec_yards_fast_avg  / pmax(targets_fast_avg,  0.1),
+      ypc_fast           = rush_yards_fast_avg / pmax(rush_att_fast_avg, 0.1),
+      fp_volatility_fast = fantasy_pts_fast_sd / pmax(fantasy_pts_fast_avg, 0.5),
+      fp_volatility_slow = fantasy_pts_slow_sd / pmax(fantasy_pts_slow_avg, 0.5)
+    )
+
+  df_decay
+}
+
+finalize_model_data <- function(df) {
+  leakage_cols <- c(
+    "pass_attempt", "rec_attempt", "rush_attempt",
+    "pass_completions", "receptions",
+    "pass_yards_gained", "rec_yards_gained", "rush_yards_gained",
+    "pass_touchdown", "pass_interception",
+    "total_yards_gained", "scrimmage_TDs", "fumbles"
+  )
+  df %>% select(-any_of(leakage_cols))
+}
+```
+
+```{r}
+model_data_v2 <- build_decay_features(model_data)
+model_data_v2 <- finalize_model_data(model_data_v2)
+
+cat("Rows:", nrow(model_data_v2), "\n")
+cat("Columns:", ncol(model_data_v2), "\n")
+```
