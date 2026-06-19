@@ -187,10 +187,6 @@ model_data <- model_data %>%
   mutate(across(11:24, ~replace_na(., 0)))
 ```
 
-#testing out code for rolling averages, SDs, # of games in sample
-4/11
-This looked sick. I think this is going to work really well. I think I'm going to change rush yards and rec yards to scrimmage yards, then change rush and rec fumbles to just fumbles, etc, to try and eliminate extra columns in my df.
-
 Next steps:
 1. get this rolling averages and SDs added for all features that I deem to be relevant/worthy of testing
 2. collapse down the ff df to try and eliminate some of the superfluous stuff (rush vs. rec fumbles -> fumbles)
@@ -200,7 +196,7 @@ Next steps:
 (think I need to drop all backup games where starter is completely healthy before I run regression. Think I also should have this so that if the QB1 is active/playing, then QB2 is auto 0)
 
 
-#Current way to get rolling averages
+
 ```{r}
 model_data <- model_data %>%
   arrange(pos_rank, team) %>%
@@ -310,7 +306,7 @@ model_data <- model_data %>%
 
 
 
-
+#Checking for holes in data set
 ```{r}
 # ==============================================================================
 # Data Cleaning — Run Before build_decay_features()
@@ -420,17 +416,5 @@ The honest reality is: those later IR weeks have a carries_4g_avg that's already
 I'd accept this as a known limitation rather than build a complex iterative solution. Document it and move on.
 
 
-
-
-
-
-BUILD THE MODEL
-
-
-
-```{r}
-save(model_data, 
-     file = "ModelData2.RData")
-```
 
 
