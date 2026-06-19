@@ -2,8 +2,88 @@
 title: "R Notebook"
 output: html_notebook
 ---
+```{r, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(rsconnect)
+library(kableExtra)
+library(nflfastR)
+library(nflreadr)
+library(slider)
+library(xgboost)
+```
+
 
 ```{r}
+load("WorkingModelData.RData")
+```
+
+
+```{r}
+# ==============================================================================
+# Exponential Decay Feature Engineering for Best Ball Fantasy Projections
+# Replaces flat rolling windows (_16g, _4g) with decay-weighted stats
+#
+# Design decisions:
+#   - NO manual shrinkage toward position mean. Instead, games_of_data is
+#     included as an explicit model feature so XGBoost learns the appropriate
+#     adjustment conditional on draft capital signals (bucket, pos_rank).
+#   - Rookies / low-sample players have decay features imputed to 0 (not
+#     position mean), so games_of_data = 0 cleanly signals "no history —
+#     fall back on bucket/pos_rank."
+#   - Cross-season carry-over seeds slow-window features from end of prior
+#     season so veterans don't start a new year cold.
+# ==============================================================================
+ 
+
+ 
+# ------------------------------------------------------------------------------
+# 1. DECAY PARAMETERS
+# ------------------------------------------------------------------------------
+# These are starting values for hyperparameter tuning (see Section 7).
+# Tune via time-series cross-validation minimizing pinball loss.
+ 
+# FAST decay: half-life ~3 games — captures recent form / hot streaks
+LAMBDA_FAST <- 0.80
+ 
+# SLOW decay: half-life ~14 games — captures baseline talent level
+LAMBDA_SLOW <- 0.95
+ 
+# Half-life formula for reference: log(0.5) / log(lambda)
+# LAMBDA_FAST -> ~3.1 games | LAMBDA_SLOW -> ~13.5 games
+ 
+ 
+# ------------------------------------------------------------------------------
+# 2. CORE HELPER: decay-weighted mean + SD in one pass
+# ------------------------------------------------------------------------------
+ 
+#' Compute decay-weighted mean and standard deviation
+#'
+#' @param x      Numeric vector of stat values (chronological, oldest first)
+#' @param lambda Decay factor (0 < lambda <= 1)
+#' @return Named list: wmean, wsd, eff_n (effective sample size)
+decay_stats <- function(x, lambda) {
+  n <- length(x)
+  if (n == 0) return(list(wmean = NA_real_, wsd = NA_real_, eff_n = 0))
+ 
+  # Most recent game = weight 1; each step back multiplied by lambda
+  weights <- lambda ^ ((n - 1):0)
+ 
+  w_sum  <- sum(weights)
+  wmean  <- sum(weights * x) / w_sum
+ 
+  # Reliability-corrected weighted variance (analogous to n-1 denominator)
+  w2_sum <- sum(weights ^ 2)
+  wvar   <- sum(weights * (x - wmean) ^ 2) / (w_sum - w2_sum / w_sum)
+  wsd    <- sqrt(max(wvar, 0))
+ 
+  # Effective N: equivalent number of equally-weighted observations
+  eff_n  <- w_sum ^ 2 / w2_sum
+ 
+  list(wmean = wmean, wsd = wsd, eff_n = eff_n)
+}
+ 
+ 
 build_decay_features <- function(df) {
 
   stat_map <- list(
@@ -178,3 +258,235 @@ model_data_v2 <- finalize_model_data(model_data_v2)
 cat("Rows:", nrow(model_data_v2), "\n")
 cat("Columns:", ncol(model_data_v2), "\n")
 ```
+
+#RB Modeling Start
+```{r}
+rb_model_data <- model_data_v2 %>%
+  filter(position == "RB") %>%
+  select(
+    # Identifiers (not features, but useful to keep for debugging)
+    gsis_id, season, week, full_name,
+    
+    # Target
+    total_fantasy_points,
+    
+    # Context
+    proj, total_line, pos_rank, bucket, experience,
+    report_status, starter_injury_status,
+    games_of_data, games_played_season,
+    
+    # Volume
+    rush_att_fast_avg, rush_att_slow_avg,
+    targets_fast_avg, targets_slow_avg,
+    
+    # Efficiency
+    ypc_fast, ypc_slow, ypt_fast, ypt_slow,
+    
+    # TDs
+    scrimmage_tds_fast_avg, scrimmage_tds_slow_avg,
+    scrimmage_tds_fast_sd, scrimmage_tds_slow_sd,
+    
+    # Fantasy points
+    fantasy_pts_fast_avg, fantasy_pts_slow_avg,
+    fantasy_pts_fast_sd, fantasy_pts_slow_sd,
+    
+    # Volatility
+    fp_volatility_fast, fp_volatility_slow,
+    
+    # Yards SDs
+    rush_yards_fast_sd, rush_yards_slow_sd,
+    rec_yards_fast_sd, rec_yards_slow_sd
+  )
+
+cat("RB rows:", nrow(rb_model_data), "\n")
+cat("Columns:", ncol(rb_model_data), "\n")
+```
+
+
+```{r}
+# ==============================================================================
+# Walk-Forward Cross-Validation Fold Setup
+# ==============================================================================
+
+# Define fold structure
+# Train on all seasons up to fold year, validate on fold year
+folds <- list(
+  fold1 = list(train_seasons = 2015:2019, val_season = 2020),
+  fold2 = list(train_seasons = 2015:2020, val_season = 2021),
+  fold3 = list(train_seasons = 2015:2021, val_season = 2022),
+  fold4 = list(train_seasons = 2015:2022, val_season = 2023)
+)
+
+# Helper function to split rb_model_data into train/validate for a given fold
+make_fold_data <- function(data, fold) {
+  train <- data %>% filter(season %in% fold$train_seasons)
+  val   <- data %>% filter(season == fold$val_season)
+  list(train = train, val = val)
+}
+
+# Verify fold sizes
+cat("Fold sizes:\n")
+for (fold_name in names(folds)) {
+  fold_data <- make_fold_data(rb_model_data, folds[[fold_name]])
+  cat(sprintf(
+    "%s — train: %d rows (%d-%d), val: %d rows (%d)\n",
+    fold_name,
+    nrow(fold_data$train),
+    min(folds[[fold_name]]$train_seasons),
+    max(folds[[fold_name]]$train_seasons),
+    nrow(fold_data$val),
+    folds[[fold_name]]$val_season
+  ))
+}
+```
+
+```{r}
+
+
+# ==============================================================================
+# Lambda Tuning Loop — 2x2 grid (expand to 4x4 once confirmed working)
+# ==============================================================================
+
+# --- Grid ---
+lambda_fast_grid <- c(0.70, 0.75, 0.80, 0.85)
+lambda_slow_grid <- c(0.93, 0.95, 0.97, 0.99)
+
+# --- Pinball loss function ---
+# The correct scoring rule for quantile regression.
+# alpha = 0.50 for the median model
+pinball_loss <- function(y, yhat, alpha = 0.50) {
+  residual <- y - yhat
+  mean(if_else(residual >= 0, alpha * residual, (alpha - 1) * residual))
+}
+
+# --- Columns the model actually trains on (no identifiers, no target) ---
+feature_cols <- c(
+  "proj", "total_line", "pos_rank", "bucket", "experience",
+  "report_status", "starter_injury_status",
+  "games_of_data", "games_played_season",
+  "rush_att_fast_avg", "rush_att_slow_avg",
+  "targets_fast_avg", "targets_slow_avg",
+  "ypc_fast", "ypc_slow",
+  "ypt_fast", "ypt_slow",
+  "scrimmage_tds_fast_avg", "scrimmage_tds_slow_avg",
+  "scrimmage_tds_fast_sd", "scrimmage_tds_slow_sd",
+  "fantasy_pts_fast_avg", "fantasy_pts_slow_avg",
+  "fantasy_pts_fast_sd", "fantasy_pts_slow_sd",
+  "rush_yards_fast_sd", "rush_yards_slow_sd",
+  "rec_yards_fast_sd", "rec_yards_slow_sd"
+)
+
+# --- Helper: rebuild RB features with given lambdas ---
+build_rb_features <- function(data, lf, ls) {
+  
+  LAMBDA_FAST <<- lf
+  LAMBDA_SLOW <<- ls
+  
+  build_decay_features(data) %>%
+    finalize_model_data() %>%
+    filter(position == "RB") %>%
+    select(
+      gsis_id, season, week, full_name,
+      total_fantasy_points,
+      all_of(feature_cols)
+    )
+}
+
+
+# --- Helper: prepare xgb.DMatrix from a dataframe ---
+make_dmatrix <- function(df) {
+  # One-hot encode categoricals
+  mat <- model.matrix(
+    ~ . - 1,
+    data = df %>% select(all_of(feature_cols))
+  )
+  xgb.DMatrix(data = mat, label = df$total_fantasy_points)
+}
+
+# --- XGBoost params for median model ---
+xgb_params <- list(
+  objective        = "reg:quantileerror",
+  quantile_alpha   = 0.50,
+  eta              = 0.05,
+  max_depth        = 5,
+  subsample        = 0.8,
+  colsample_bytree = 0.8,
+  min_child_weight = 10
+)
+
+# ==============================================================================
+# Main tuning loop
+# ==============================================================================
+
+results <- list()
+
+for (lf in lambda_fast_grid) {
+  for (ls in lambda_slow_grid) {
+    
+    combo_name <- paste0("lf", lf, "_ls", ls)
+    cat(sprintf("\n--- Testing lambda_fast=%.2f, lambda_slow=%.2f ---\n", lf, ls))
+    
+    # Rebuild features with this lambda combo
+    cat("  Rebuilding features...\n")
+    rb_data_tuning <- build_rb_features(model_data, lf, ls)
+    
+    fold_losses <- numeric(length(folds))
+    
+    for (fold_idx in seq_along(folds)) {
+      fold      <- folds[[fold_idx]]
+      fold_data <- make_fold_data(rb_data_tuning, fold)
+      
+      dtrain <- make_dmatrix(fold_data$train)
+      dval   <- make_dmatrix(fold_data$val)
+      
+      # Train with early stopping
+      model <- xgb.train(
+        params  = xgb_params,
+        data    = dtrain,
+        nrounds = 500,
+        watchlist = list(val = dval),
+        early_stopping_rounds = 30,
+        verbose = 0
+      )
+      
+      # Evaluate pinball loss on validation set
+      preds <- predict(model, dval)
+      actual <- fold_data$val$total_fantasy_points
+      loss <- pinball_loss(actual, preds, alpha = 0.50)
+      fold_losses[fold_idx] <- loss
+      
+      cat(sprintf("  Fold %d val pinball loss: %.4f (stopped at round %d)\n",
+                  fold_idx, loss, model$best_iteration))
+    }
+    
+    avg_loss <- mean(fold_losses)
+    cat(sprintf("  Average pinball loss: %.4f\n", avg_loss))
+    
+    results[[combo_name]] <- list(
+      lambda_fast  = lf,
+      lambda_slow  = ls,
+      fold_losses  = fold_losses,
+      avg_loss     = avg_loss
+    )
+  }
+}
+
+# ==============================================================================
+# Summary
+# ==============================================================================
+
+cat("\n--- Lambda Tuning Results ---\n")
+results_df <- map_dfr(results, ~ tibble(
+  lambda_fast = .x$lambda_fast,
+  lambda_slow = .x$lambda_slow,
+  fold1_loss  = .x$fold_losses[1],
+  fold2_loss  = .x$fold_losses[2],
+  fold3_loss  = .x$fold_losses[3],
+  fold4_loss  = .x$fold_losses[4],
+  avg_loss    = .x$avg_loss
+))
+
+print(results_df %>% arrange(avg_loss))
+```
+
+
